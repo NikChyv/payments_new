@@ -101,6 +101,29 @@
     .acts .btn{flex:1} .two{grid-template-columns:1fr}
     .tabs{width:100%;margin:10px 0 0} .tab{flex:1}
   }
+  /* ===== клиентский режим: «Мои платежи» ===== */
+  .client-only{display:none}
+  body.client-mode .client-only{display:block}
+  body.client-mode .cards,body.client-mode .toolbar,body.client-mode #banner{display:none!important}
+  .mylist-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px}
+  .mylist-top h2{margin:0;font-size:18px}
+  .mylist-top .who{color:var(--muted);font-size:13px}
+  .mylist-sub{margin:2px 0 16px;color:var(--muted);font-size:13.5px}
+  .cl-status{margin-top:11px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .cl-now{display:inline-flex;align-items:center;gap:7px;font-weight:700;font-size:13.5px;padding:6px 12px;border-radius:20px}
+  .cl-now.s-new{background:var(--gray-bg);color:var(--gray)}
+  .cl-now.s-prog{background:var(--blue-bg);color:var(--blue)}
+  .cl-now.s-paid,.cl-now.s-sent{background:var(--green-bg);color:var(--green)}
+  .steps{display:flex;align-items:center;flex-wrap:wrap;gap:5px;margin-top:13px}
+  .step{display:flex;align-items:center;gap:7px}
+  .step .dot{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    font-size:12px;font-weight:700;background:#e5e7eb;color:#9ca3af;flex:none}
+  .step.done .dot{background:var(--green);color:#fff}
+  .step.active .dot{background:var(--accent);color:#fff;box-shadow:0 0 0 3px rgba(79,70,229,.18)}
+  .step .lab{font-size:12px;color:var(--muted)}
+  .step.done .lab,.step.active .lab{color:var(--ink);font-weight:600}
+  .bar{height:2px;width:18px;background:#e5e7eb;border-radius:2px;flex:none}
+  .bar.done{background:var(--green)}
 </style>
 </head>
 <body>
@@ -143,6 +166,15 @@
         <option value="sent">Чек отправлен</option>
       </select>
       <button class="ghost" id="clearFilter">Сбросить</button>
+    </div>
+
+    <div id="clientHead" class="client-only">
+      <div class="mylist-top">
+        <h2>Мои платежи</h2>
+        <span class="who" id="clientName"></span>
+        <button class="ghost" id="clientRefresh">Обновить</button>
+      </div>
+      <p class="mylist-sub">Статус каждого поручения обновляется автоматически. Как только бухгалтер оплатит — вы сразу увидите ✅.</p>
     </div>
 
     <div id="list"></div>
@@ -361,6 +393,7 @@
 
   /* ---------- filter state ---------- */
   var quickFilter = "";
+  var CLIENT = null; // если задан ?client=… — режим клиента (видит только свои платежи)
 
   /* ---------- render queue ---------- */
   function activeOpen(it){ return it.status==="new" || it.status==="in_progress"; }
@@ -384,6 +417,7 @@
   }
 
   function render(){
+    if(CLIENT){ renderClient(); return; }
     computeCounts();
     var list = document.getElementById("list");
     var q = (document.getElementById("search").value||"").toLowerCase().trim();
@@ -463,6 +497,73 @@
   }
   function btn(kind,act,label){ return '<button class="btn '+kind+'" data-act="'+act+'">'+label+'</button>'; }
 
+  /* ---------- render queue: режим клиента (read-only, только свои) ---------- */
+  function renderClient(){
+    var list = document.getElementById("list");
+    var rows = items.filter(function(it){ return it.client===CLIENT; });
+    rows.sort(function(a,b){
+      var ao=activeOpen(a)?0:1, bo=activeOpen(b)?0:1;
+      if(ao!==bo) return ao-bo;            // открытые сверху
+      return a.due<b.due?-1:(a.due>b.due?1:0);
+    });
+    if(rows.length===0){
+      list.innerHTML='<div class="empty">Здесь появятся ваши платежи после отправки заявки.</div>';
+      return;
+    }
+    list.innerHTML = rows.map(rowHtmlClient).join("");
+  }
+
+  // текущий статус словами для клиента
+  function clStatusInfo(it){
+    if(it.status==="in_progress") return {cls:"s-prog", icon:"⏳", text:"Бухгалтер взял в работу"};
+    if(it.status==="paid")        return {cls:"s-paid", icon:"✅", text:"Оплачено"};
+    if(it.status==="sent")        return {cls:"s-sent", icon:"✅", text: it.needReceipt ? "Оплачено, чек отправлен" : "Оплачено"};
+    return {cls:"s-new", icon:"🕓", text:"Принята, ждёт оплаты"};
+  }
+
+  // индикатор прогресса: Принята → В работе → Оплачено → (Чек)
+  function clSteps(it){
+    var withReceipt = it.needReceipt;
+    var labels = withReceipt ? ["Принята","В работе","Оплачено","Чек"] : ["Принята","В работе","Оплачено"];
+    var stage = {"new":1, in_progress:2, paid:3, sent:4}[it.status] || 1;
+    var fullyDone = withReceipt ? (it.status==="sent") : (it.status==="paid" || it.status==="sent");
+    var parts = [];
+    for(var i=0;i<labels.length;i++){
+      var n=i+1, cls="", dot=String(n);
+      if(fullyDone || n<stage){ cls="done"; dot="✓"; }
+      else if(n===stage){ cls="active"; }
+      if(i>0){ var prevDone = fullyDone || (i<stage); parts.push('<div class="bar'+(prevDone?" done":"")+'"></div>'); }
+      parts.push('<div class="step '+cls+'"><span class="dot">'+dot+'</span><span class="lab">'+labels[i]+'</span></div>');
+    }
+    return '<div class="steps">'+parts.join("")+'</div>';
+  }
+
+  function rowHtmlClient(it){
+    var done = (it.status==="paid"||it.status==="sent");
+    var key = done ? "green" : "gray";
+    var s = clStatusInfo(it);
+    var fileBadge = it.file ? (it.file.url
+        ? '<a class="badge b-file" href="'+esc(it.file.url)+'" target="_blank" rel="noopener" title="Открыть файл">📎 '+esc(it.file.name)+'</a>'
+        : '<span class="badge b-file" title="'+esc(it.file.name)+'">📎 '+esc(it.file.name)+'</span>') : '';
+    var recBadge = it.recurrence!=="once" ? '<span class="badge b-rec">🔁 '+recLbl[it.recurrence]+'</span>' : '';
+    return ''+
+    '<div class="row b-'+key+'">'+
+      '<div class="main">'+
+        '<div class="head">'+
+          '<span class="payee">'+esc(it.payee)+'</span>'+
+          '<span class="amount">'+fmtMoney(it.amount)+'</span>'+
+        '</div>'+
+        '<div class="meta">'+
+          '<span>📅 '+fmtDate(it.due)+'</span>'+
+          (it.purpose?'<span>'+esc(it.purpose)+'</span>':'')+
+          (it.requisites?'<span>'+esc(it.requisites)+'</span>':'')+
+        '</div>'+
+        '<div class="cl-status"><span class="cl-now '+s.cls+'">'+s.icon+' '+s.text+'</span>'+recBadge+fileBadge+'</div>'+
+        clSteps(it)+
+      '</div>'+
+    '</div>';
+  }
+
   /* ---------- actions ---------- */
   function find(idv){ for(var i=0;i<items.length;i++) if(items[i].id===idv) return items[i]; return null; }
 
@@ -528,7 +629,14 @@
     ok.className="ok-msg show";
     refreshClients();
     setTimeout(function(){ ok.className="ok-msg"; }, 6000);
-    toast("Заявка добавлена в очередь");
+    if(CLIENT){
+      // клиент сразу попадает в «Мои платежи» и видит свою заявку со статусом
+      switchView("queue");
+      if(useRemote){ load().then(render); } else { render(); }
+      toast("Заявка отправлена — статус виден ниже");
+    } else {
+      toast("Заявка добавлена в очередь");
+    }
   }
 
   /* ---------- clients dropdowns ---------- */
@@ -562,32 +670,39 @@
 
   /* ---------- init ---------- */
   async function init(){
+    // персональная ссылка клиента: ?client=Название компании — определяем ДО первого рендера
+    CLIENT = new URLSearchParams(location.search).get("client") || null;
+
     await load(); refreshClients(); render();
     // default date = today on form
     var due=document.querySelector('input[name=due]'); if(due) due.value=todayStr();
 
-    // персональная ссылка клиента: ?client=Название компании
-    var clientParam = new URLSearchParams(location.search).get("client");
-    if(clientParam){
+    if(CLIENT){
       document.body.classList.add("client-mode");
-      var tabsEl = document.querySelector(".tabs"); if(tabsEl) tabsEl.style.display="none";
-      var sub = document.querySelector(".brand p"); if(sub) sub.textContent="Оставьте заявку на оплату — бухгалтер получит её сразу";
-      switchView("form");
+      document.getElementById("tabQueue").textContent = "Мои платежи";
+      document.getElementById("tabForm").textContent  = "Новая заявка";
+      var sub = document.querySelector(".brand p"); if(sub) sub.textContent="Оставьте заявку — и следите за статусом каждого платежа";
       var ci = document.querySelector('input[name=client]');
-      if(ci){ ci.value = clientParam; ci.readOnly = true; }
+      if(ci){ ci.value = CLIENT; ci.readOnly = true; }
+      var cn = document.getElementById("clientName"); if(cn) cn.textContent = CLIENT;
+      // если у клиента уже есть платежи — открываем список, иначе форму
+      var mine = items.filter(function(it){ return it.client===CLIENT; });
+      switchView(mine.length ? "queue" : "form");
     }
 
-    // автообновление очереди у бухгалтера (онлайн-режим), раз в 30 сек
-    if(useRemote && !clientParam){
+    // автообновление списка (онлайн-режим): и у бухгалтера, и у клиента — чтобы видеть смену статуса
+    if(useRemote){
       setInterval(function(){
         if(!document.getElementById("view-queue").classList.contains("hidden")){
           load().then(render);
         }
-      }, 30000);
+      }, 15000);
     }
 
-    document.getElementById("tabQueue").addEventListener("click",function(){switchView("queue");});
+    document.getElementById("tabQueue").addEventListener("click",function(){switchView("queue"); if(useRemote) load().then(render);});
     document.getElementById("tabForm").addEventListener("click",function(){switchView("form");});
+    var crf=document.getElementById("clientRefresh");
+    if(crf) crf.addEventListener("click",function(){ if(useRemote){ load().then(function(){render();toast("Обновлено");}); } else { render(); } });
     document.getElementById("list").addEventListener("click", onListClick);
     document.getElementById("payForm").addEventListener("submit", onSubmit);
     document.getElementById("search").addEventListener("input", render);
