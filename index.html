@@ -32,7 +32,7 @@
     border:1px solid #f5c2c2;border-radius:12px;padding:12px 16px;margin-bottom:18px;font-weight:600;font-size:14px}
   .banner.show{display:flex}
   /* cards summary */
-  .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+  .cards{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px}
   .scard{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;cursor:pointer;transition:.12s}
   .scard:hover{border-color:var(--accent)}
   .scard.sel{border-color:var(--accent);box-shadow:0 0 0 2px rgba(79,70,229,.15)}
@@ -40,6 +40,7 @@
   .scard .l{font-size:12.5px;color:var(--muted);margin-top:6px}
   .scard.red .n{color:var(--red)} .scard.orange .n{color:var(--orange)}
   .scard.blue .n{color:var(--blue)} .scard.gray .n{color:var(--gray)}
+  .scard.purple .n{color:#6d28d9}
   /* toolbar */
   .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
   .toolbar input,.toolbar select{padding:9px 12px;border:1px solid var(--line);border-radius:10px;font-size:14px;background:#fff}
@@ -68,6 +69,7 @@
   .b-due-amber{background:var(--amber-bg);color:var(--amber)}
   .b-rec{background:#e7effe;color:var(--blue)}
   .b-file{background:#f1f5f9;color:#334155;cursor:pointer;text-decoration:none}
+  .b-file .clip{font-size:18px;line-height:1;vertical-align:-2px;margin-right:2px}
   .acts{display:flex;flex-direction:column;gap:8px;min-width:172px}
   .btn{border:none;border-radius:10px;padding:9px 12px;font-size:13.5px;font-weight:600;cursor:pointer;text-align:center}
   .btn.p{background:var(--accent);color:#fff} .btn.p:hover{background:var(--accent-d)}
@@ -83,6 +85,7 @@
   .fg label{display:block;font-size:13px;font-weight:600;margin-bottom:6px}
   .fg .req{color:var(--red)}
   .fg input,.fg select,.fg textarea{width:100%;padding:11px 13px;border:1px solid var(--line);border-radius:10px;font-size:14px;font-family:inherit;background:#fff}
+  .fg input[name=client]{font-size:16px;font-weight:600;padding:12px 13px}
   .fg textarea{resize:vertical;min-height:64px}
   .two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
   .hint{font-size:12px;color:var(--muted);margin-top:5px}
@@ -124,12 +127,14 @@
   .step.done .lab,.step.active .lab{color:var(--ink);font-weight:600}
   .bar{height:2px;width:18px;background:#e5e7eb;border-radius:2px;flex:none}
   .bar.done{background:var(--green)}
+  body.client-mode input[name=client]{font-size:19px;font-weight:700;color:var(--ink);background:#f5f7ff;border-color:#c7d2fe}
+  body.client-mode .fg:first-of-type label{font-size:14px}
 </style>
 </head>
 <body>
 <header>
   <div class="wrap topbar">
-    <div class="logo">₽</div>
+    <div class="logo">Br</div>
     <div class="brand">
       <h1>Платежи под контролем</h1>
       <p>Поручения клиентов — в одном месте, без стикеров</p>
@@ -152,6 +157,7 @@
       <div class="scard orange" data-filter="today"><div class="n" id="cToday">0</div><div class="l">На сегодня</div></div>
       <div class="scard gray" data-filter="week"><div class="n" id="cWeek">0</div><div class="l">Ближайшие 7 дней</div></div>
       <div class="scard blue" data-filter="prog"><div class="n" id="cProg">0</div><div class="l">В работе</div></div>
+      <div class="scard purple" data-filter="await_doc"><div class="n" id="cDoc">0</div><div class="l">Отправить документ</div></div>
     </div>
 
     <div class="toolbar">
@@ -163,7 +169,8 @@
         <option value="new">Новые</option>
         <option value="in_progress">В работе</option>
         <option value="paid">Оплаченные</option>
-        <option value="sent">Чек отправлен</option>
+        <option value="await_doc">Отправить платёжный документ</option>
+        <option value="sent">Документ отправлен</option>
       </select>
       <button class="ghost" id="clearFilter">Сбросить</button>
     </div>
@@ -200,12 +207,12 @@
 
       <div class="two">
         <div class="fg">
-          <label>Сумма, ₽ <span class="req">*</span></label>
-          <input name="amount" type="number" min="1" step="0.01" required placeholder="0">
+          <label>Сумма, Br <span class="req">*</span></label>
+          <input name="amount" type="number" min="1" step="0.01" required placeholder="0,00">
         </div>
         <div class="fg">
-          <label>ИНН / реквизиты или счёт</label>
-          <input name="requisites" placeholder="ИНН, р/с или № счёта">
+          <label>УНП / реквизиты или счёт</label>
+          <input name="requisites" placeholder="УНП, р/с или № счёта">
         </div>
       </div>
 
@@ -236,7 +243,7 @@
       </div>
 
       <div class="fg">
-        <label><input type="checkbox" name="needReceipt" checked style="width:auto;margin-right:7px"> Нужен чек об операции после оплаты</label>
+        <label><input type="checkbox" name="needReceipt" checked style="width:auto;margin-right:7px"> Нужен платёжный документ после оплаты</label>
       </div>
 
       <button type="submit" class="submit">Отправить поручение</button>
@@ -330,9 +337,12 @@
   }
 
   /* ---------- date helpers ---------- */
+  function isoLocal(d){
+    return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+  }
   function todayStr(){
     var d = new Date(); d.setHours(0,0,0,0);
-    return d.toISOString().slice(0,10);
+    return isoLocal(d); // локальная дата без сдвига по UTC (иначе подставлялся вчерашний день)
   }
   function daysBetween(dateStr){
     var t = new Date(todayStr()+"T00:00:00");
@@ -341,11 +351,11 @@
   }
   function addDays(dateStr, n){
     var d = new Date(dateStr+"T00:00:00"); d.setDate(d.getDate()+n);
-    return d.toISOString().slice(0,10);
+    return isoLocal(d);
   }
   function addMonths(dateStr, n){
     var d = new Date(dateStr+"T00:00:00"); d.setMonth(d.getMonth()+n);
-    return d.toISOString().slice(0,10);
+    return isoLocal(d);
   }
   function fmtDate(dateStr){
     var d = new Date(dateStr+"T00:00:00");
@@ -353,14 +363,14 @@
     return d.getDate()+" "+m[d.getMonth()]+" "+d.getFullYear();
   }
   function fmtMoney(v){
-    return Number(v).toLocaleString("ru-RU",{minimumFractionDigits:0,maximumFractionDigits:2})+" ₽";
+    return Number(v).toLocaleString("ru-RU",{minimumFractionDigits:2,maximumFractionDigits:2})+" Br";
   }
 
   /* ---------- seed demo data (so value is visible at once) ---------- */
   function seed(){
     var t = todayStr();
     return [
-      {id:id(), client:"ООО «Ромашка»", payee:"Яндекс Директ", amount:45000, requisites:"ИНН 7736207543",
+      {id:id(), client:"ООО «Ромашка»", payee:"Яндекс Директ", amount:45000, requisites:"УНП 191234567",
         due:addDays(t,-2), recurrence:"weekly", purpose:"Пополнение рекламного кабинета", status:"new",
         needReceipt:true, file:null, created:t},
       {id:id(), client:"ИП Смирнов А.В.", payee:"Аренда офиса (ООО «Парус»)", amount:80000, requisites:"р/с 40702810…",
@@ -370,7 +380,7 @@
         needReceipt:true, file:{name:"schet_A-1188.pdf"}, created:t},
       {id:id(), client:"ООО «Вектор»", payee:"СБИС (отчётность)", amount:6900, requisites:"",
         due:addDays(t,5), recurrence:"monthly", purpose:"Абонентская плата", status:"new", needReceipt:false, file:null, created:t},
-      {id:id(), client:"ИП Смирнов А.В.", payee:"Налог УСН", amount:31200, requisites:"КБК 182…",
+      {id:id(), client:"ИП Смирнов А.В.", payee:"Налог УСН", amount:31200, requisites:"налог в бюджет",
         due:addDays(t,-1), recurrence:"once", purpose:"Авансовый платёж", status:"paid",
         needReceipt:true, file:null, created:t}
     ];
@@ -388,7 +398,7 @@
     return {key:"gray", lbl:"Через "+d+" дн.", cls:""};
   }
   var recLbl = {once:"Разовый", weekly:"Еженедельно", monthly:"Ежемесячно"};
-  var stLbl  = {new:"Новая", in_progress:"В работе", paid:"Оплачено", sent:"Чек отправлен"};
+  var stLbl  = {new:"Новая", in_progress:"В работе", paid:"Оплачено", sent:"Документ отправлен"};
   var stCls  = {new:"b-st-new", in_progress:"b-st-prog", paid:"b-st-paid", sent:"b-st-sent"};
 
   /* ---------- filter state ---------- */
@@ -399,16 +409,17 @@
   function activeOpen(it){ return it.status==="new" || it.status==="in_progress"; }
 
   function computeCounts(){
-    var o=0,today=0,week=0,prog=0;
+    var o=0,today=0,week=0,prog=0,doc=0;
     items.forEach(function(it){
-      if(!activeOpen(it)) { if(it.status==="in_progress") {} return; }
+      if(it.status==="paid" && it.needReceipt) doc++;
+      if(!activeOpen(it)) return;
       var d = daysBetween(it.due);
       if(d<0) o++;
       else if(d===0) today++;
       else if(d<=7) week++;
       if(it.status==="in_progress") prog++;
     });
-    setText("cOverdue",o); setText("cToday",today); setText("cWeek",week); setText("cProg",prog);
+    setText("cOverdue",o); setText("cToday",today); setText("cWeek",week); setText("cProg",prog); setText("cDoc",doc);
     var b = document.getElementById("banner");
     if(o+today>0){
       b.className="banner show";
@@ -427,6 +438,7 @@
     var rows = items.slice().filter(function(it){
       if(fc && it.client!==fc) return false;
       if(fs==="active"){ if(!activeOpen(it)) return false; }
+      else if(fs==="await_doc"){ if(!(it.status==="paid"&&it.needReceipt)) return false; }
       else if(fs!=="all"){ if(it.status!==fs) return false; }
       if(quickFilter){
         var d = daysBetween(it.due);
@@ -434,6 +446,7 @@
         if(quickFilter==="today"   && !(activeOpen(it)&&d===0)) return false;
         if(quickFilter==="week"    && !(activeOpen(it)&&d>0&&d<=7)) return false;
         if(quickFilter==="prog"    && it.status!=="in_progress") return false;
+        if(quickFilter==="await_doc" && !(it.status==="paid"&&it.needReceipt)) return false;
       }
       if(q){
         var hay=(it.client+" "+it.payee+" "+(it.purpose||"")+" "+(it.requisites||"")).toLowerCase();
@@ -461,7 +474,12 @@
         ? '<a class="badge b-file" href="'+esc(it.file.url)+'" target="_blank" rel="noopener" title="Открыть файл">📎 '+esc(it.file.name)+'</a>'
         : '<span class="badge b-file" title="'+esc(it.file.name)+'">📎 '+esc(it.file.name)+'</span>') : '';
     var recBadge = it.recurrence!=="once" ? '<span class="badge b-rec">🔁 '+recLbl[it.recurrence]+'</span>' : '';
-    var receiptBadge = it.needReceipt ? '<span class="badge b-rec">нужен чек</span>' : '';
+    var receiptBadge = '';
+    if(it.needReceipt && it.status!=="sent"){
+      receiptBadge = (it.status==="paid")
+        ? '<span class="badge b-due-amber">📄 отправить документ</span>'
+        : '<span class="badge b-rec">нужен документ</span>';
+    }
 
     var acts = '';
     if(it.status==="new")
@@ -469,7 +487,7 @@
     else if(it.status==="in_progress")
       acts = btn("ok","pay","Отметить оплаченным") + btn("soft","back","Вернуть в «новые»");
     else if(it.status==="paid")
-      acts = (it.needReceipt? btn("p","send","Чек отправлен клиенту") : btn("soft","send","Закрыть"));
+      acts = (it.needReceipt? btn("p","send","Документ отправлен клиенту") : btn("soft","send","Закрыть"));
     else if(it.status==="sent")
       acts = '<span class="badge b-st-sent" style="text-align:center;padding:9px">✓ Готово</span>';
     acts += btn("del","del","Удалить");
@@ -516,15 +534,15 @@
   // текущий статус словами для клиента
   function clStatusInfo(it){
     if(it.status==="in_progress") return {cls:"s-prog", icon:"⏳", text:"Бухгалтер взял в работу"};
-    if(it.status==="paid")        return {cls:"s-paid", icon:"✅", text:"Оплачено"};
-    if(it.status==="sent")        return {cls:"s-sent", icon:"✅", text: it.needReceipt ? "Оплачено, чек отправлен" : "Оплачено"};
+    if(it.status==="paid")        return {cls:"s-paid", icon:"✅", text: it.needReceipt ? "Оплачено, готовим документ" : "Оплачено"};
+    if(it.status==="sent")        return {cls:"s-sent", icon:"✅", text: it.needReceipt ? "Оплачено, документ отправлен" : "Оплачено"};
     return {cls:"s-new", icon:"🕓", text:"Принята, ждёт оплаты"};
   }
 
   // индикатор прогресса: Принята → В работе → Оплачено → (Чек)
   function clSteps(it){
     var withReceipt = it.needReceipt;
-    var labels = withReceipt ? ["Принята","В работе","Оплачено","Чек"] : ["Принята","В работе","Оплачено"];
+    var labels = withReceipt ? ["Принята","В работе","Оплачено","Документ"] : ["Принята","В работе","Оплачено"];
     var stage = {"new":1, in_progress:2, paid:3, sent:4}[it.status] || 1;
     var fullyDone = withReceipt ? (it.status==="sent") : (it.status==="paid" || it.status==="sent");
     var parts = [];
@@ -717,9 +735,10 @@
     document.querySelectorAll(".scard").forEach(function(card){
       card.addEventListener("click", function(){
         var f=card.getAttribute("data-filter");
-        if(quickFilter===f){ quickFilter=""; card.classList.remove("sel"); }
-        else{ quickFilter=f; document.querySelectorAll(".scard").forEach(function(c){c.classList.remove("sel");}); card.classList.add("sel"); }
-        document.getElementById("fStatus").value="active";
+        var on = quickFilter!==f;
+        document.querySelectorAll(".scard").forEach(function(c){c.classList.remove("sel");});
+        if(on){ quickFilter=f; card.classList.add("sel"); } else { quickFilter=""; }
+        document.getElementById("fStatus").value = (on && f==="await_doc") ? "all" : "active";
         render();
       });
     });
