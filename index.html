@@ -485,11 +485,13 @@
     if(it.status==="new")
       acts = btn("p","take","Взять в работу") + btn("ok","pay","Отметить оплаченным");
     else if(it.status==="in_progress")
-      acts = btn("ok","pay","Отметить оплаченным") + btn("soft","back","Вернуть в «новые»");
+      acts = btn("ok","pay","Отметить оплаченным") + btn("soft","back","↩ Вернуть в «новые»");
     else if(it.status==="paid")
-      acts = (it.needReceipt? btn("p","send","Документ отправлен клиенту") : btn("soft","send","Закрыть"));
+      acts = (it.needReceipt? btn("p","send","Документ отправлен клиенту") : btn("soft","send","Закрыть"))
+           + btn("soft","unpay","↩ Отменить оплату");
     else if(it.status==="sent")
-      acts = '<span class="badge b-st-sent" style="text-align:center;padding:9px">✓ Готово</span>';
+      acts = '<span class="badge b-st-sent" style="text-align:center;padding:9px">✓ Готово</span>'
+           + btn("soft","unsend","↩ Вернуть в «Оплачено»");
     acts += btn("del","del","Удалить");
 
     return ''+
@@ -593,9 +595,11 @@
     var act = b.getAttribute("data-act");
 
     if(act==="take"){ it.status="in_progress"; toast("Взято в работу"); }
-    else if(act==="back"){ it.status="new"; }
+    else if(act==="back"){ it.status="new"; toast("Возвращено в «Новые»"); }
     else if(act==="pay"){ markPaid(it); }
     else if(act==="send"){ it.status="sent"; toast("Платёж закрыт"); }
+    else if(act==="unpay"){ undoPaid(it); }
+    else if(act==="unsend"){ it.status="paid"; toast("Возвращено в «Оплачено»"); }
     else if(act==="del"){
       if(!confirm("Удалить платёж?")) return;
       removeRemote(it.id);
@@ -604,17 +608,38 @@
     save(); render();
   }
 
+  function nextDueOf(it){ return it.recurrence==="weekly" ? addDays(it.due,7) : addMonths(it.due,1); }
+
   function markPaid(it){
     it.status="paid";
     var msg = "Отмечено как оплачено";
     if(it.recurrence!=="once"){
-      var nextDue = it.recurrence==="weekly" ? addDays(it.due,7) : addMonths(it.due,1);
+      var nextDue = nextDueOf(it);
       var copy = JSON.parse(JSON.stringify(it));
       copy.id = id(); copy.status="new"; copy.due=nextDue; copy.file=null; copy.created=todayStr();
       items.push(copy);
       msg = "Оплачено. Создан следующий платёж на "+fmtDate(nextDue);
     }
     toast(msg);
+  }
+
+  // откат «оплачено» назад (ошибочный клик). У регулярного убираем авто-созданный
+  // следующий платёж, если он ещё не тронут — чтобы не оставлять дубль.
+  function undoPaid(it){
+    it.status="in_progress";
+    var removed=false;
+    if(it.recurrence!=="once"){
+      var nd = nextDueOf(it);
+      for(var i=0;i<items.length;i++){
+        var c=items[i];
+        if(c!==it && c.status==="new" && c.recurrence===it.recurrence &&
+           c.client===it.client && c.payee===it.payee &&
+           Number(c.amount)===Number(it.amount) && c.due===nd){
+          removeRemote(c.id); items.splice(i,1); removed=true; break;
+        }
+      }
+    }
+    toast(removed ? "Оплата отменена, следующий платёж удалён" : "Оплата отменена");
   }
 
   /* ---------- form submit ---------- */
