@@ -129,6 +129,20 @@
   .bar.done{background:var(--green)}
   body.client-mode input[name=client]{font-size:19px;font-weight:700;color:var(--ink);background:#f5f7ff;border-color:#c7d2fe}
   body.client-mode .fg:first-of-type label{font-size:14px}
+  /* вход сотрудника */
+  #view-login{max-width:380px;margin:48px auto 0}
+  .login-card{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:26px}
+  .login-card h2{margin:0 0 6px;font-size:19px}
+  .login-card p{margin:0 0 18px;color:var(--muted);font-size:13.5px}
+  .login-card input{width:100%;padding:11px 13px;border:1px solid var(--line);border-radius:10px;font-size:14px;margin-bottom:12px}
+  .login-card button{width:100%;background:var(--accent);color:#fff;border:none;border-radius:11px;padding:12px;font-size:15px;font-weight:700;cursor:pointer}
+  .login-card button:hover{background:var(--accent-d)}
+  .login-err{color:var(--red);font-size:13px;margin-top:8px;min-height:18px}
+  .staff-box{display:flex;align-items:center;gap:12px;margin-left:auto;font-size:13px}
+  .staff-box .nm{font-weight:600}
+  .staff-box .role{color:var(--muted)}
+  .staff-box button{background:#fff;border:1px solid var(--line);border-radius:9px;padding:7px 12px;cursor:pointer;font-size:13px;color:var(--muted)}
+  .staff-box button:hover{border-color:var(--accent);color:var(--ink)}
 </style>
 </head>
 <body>
@@ -139,9 +153,13 @@
       <h1>Платежи под контролем</h1>
       <p>Поручения клиентов — в одном месте, без стикеров</p>
     </div>
-    <div class="tabs">
+    <div class="tabs" id="tabs">
       <button class="tab active" data-view="queue" id="tabQueue">Очередь платежей</button>
       <button class="tab" data-view="form" id="tabForm">Новая заявка</button>
+    </div>
+    <div class="staff-box hidden" id="staffBox">
+      <span><span class="nm" id="staffName"></span> · <span class="role" id="staffRole"></span></span>
+      <button id="logoutBtn">Выйти</button>
     </div>
   </div>
 </header>
@@ -248,6 +266,18 @@
 
       <button type="submit" class="submit">Отправить поручение</button>
     </form>
+  </section>
+
+  <!-- ===== ВХОД (бухгалтер/админ) ===== -->
+  <section id="view-login" class="hidden">
+    <div class="login-card">
+      <h2>Вход для бухгалтера</h2>
+      <p>Войдите, чтобы увидеть очередь платежей.</p>
+      <input id="loginEmail" type="email" placeholder="email" autocomplete="username">
+      <input id="loginPass" type="password" placeholder="пароль" autocomplete="current-password">
+      <button id="loginBtn">Войти</button>
+      <div class="login-err" id="loginErr"></div>
+    </div>
   </section>
 
 </main>
@@ -404,6 +434,8 @@
   /* ---------- filter state ---------- */
   var quickFilter = "";
   var CLIENT = null; // если задан ?client=… — режим клиента (видит только свои платежи)
+  var currentStaff = null;   // профиль вошедшего сотрудника {name, is_admin}
+  var _pollStarted = false;
 
   /* ---------- render queue ---------- */
   function activeOpen(it){ return it.status==="new" || it.status==="in_progress"; }
@@ -706,42 +738,67 @@
   function switchView(v){
     document.getElementById("view-queue").classList.toggle("hidden", v!=="queue");
     document.getElementById("view-form").classList.toggle("hidden", v!=="form");
+    document.getElementById("view-login").classList.toggle("hidden", v!=="login");
     document.getElementById("tabQueue").classList.toggle("active", v==="queue");
     document.getElementById("tabForm").classList.toggle("active", v==="form");
     if(v==="queue") render();
   }
 
   /* ---------- init ---------- */
-  async function init(){
-    // персональная ссылка клиента: ?client=Название компании — определяем ДО первого рендера
-    CLIENT = new URLSearchParams(location.search).get("client") || null;
+  function startPoll(){
+    if(_pollStarted || !useRemote) return; _pollStarted = true;
+    setInterval(function(){
+      if(!document.getElementById("view-queue").classList.contains("hidden")){ load().then(render); }
+    }, 15000);
+  }
 
+  // вошёл сотрудник: подтянуть профиль (роль) и показать очередь
+  async function onLoggedIn(){
+    var ures = await sb.auth.getUser();
+    var u = ures.data ? ures.data.user : null;
+    if(!u){ switchView("login"); return; }
+    var st = await sb.from("staff").select("name,is_admin").eq("id", u.id).single();
+    if(st.error || !st.data){
+      toast("Этот аккаунт не подключён как сотрудник");
+      await sb.auth.signOut();
+      switchView("login");
+      return;
+    }
+    currentStaff = st.data;
+    document.getElementById("staffName").textContent = currentStaff.name;
+    document.getElementById("staffRole").textContent = currentStaff.is_admin ? "владелец" : "бухгалтер";
+    document.getElementById("staffBox").classList.remove("hidden");
+    document.getElementById("tabs").classList.add("hidden");
     await load(); refreshClients(); render();
-    // default date = today on form
+    switchView("queue");
+    startPoll();
+  }
+
+  async function doLogin(){
+    var email = (document.getElementById("loginEmail").value||"").trim();
+    var pass  = document.getElementById("loginPass").value||"";
+    var errEl = document.getElementById("loginErr"); errEl.textContent = "";
+    var btn = document.getElementById("loginBtn"); var t = btn.textContent;
+    btn.disabled = true; btn.textContent = "Входим…";
+    var res = await sb.auth.signInWithPassword({ email: email, password: pass });
+    btn.disabled = false; btn.textContent = t;
+    if(res.error){ errEl.textContent = "Не удалось войти — проверьте email и пароль"; return; }
+    document.getElementById("loginPass").value = "";
+    await onLoggedIn();
+  }
+
+  async function doLogout(){
+    await sb.auth.signOut();
+    currentStaff = null; items = [];
+    document.getElementById("staffBox").classList.add("hidden");
+    switchView("login");
+  }
+
+  async function init(){
+    CLIENT = new URLSearchParams(location.search).get("client") || null;
     var due=document.querySelector('input[name=due]'); if(due) due.value=todayStr();
 
-    if(CLIENT){
-      document.body.classList.add("client-mode");
-      document.getElementById("tabQueue").textContent = "Мои платежи";
-      document.getElementById("tabForm").textContent  = "Новая заявка";
-      var sub = document.querySelector(".brand p"); if(sub) sub.textContent="Оставьте заявку — и следите за статусом каждого платежа";
-      var ci = document.querySelector('input[name=client]');
-      if(ci){ ci.value = CLIENT; ci.readOnly = true; }
-      var cn = document.getElementById("clientName"); if(cn) cn.textContent = CLIENT;
-      // если у клиента уже есть платежи — открываем список, иначе форму
-      var mine = items.filter(function(it){ return it.client===CLIENT; });
-      switchView(mine.length ? "queue" : "form");
-    }
-
-    // автообновление списка (онлайн-режим): и у бухгалтера, и у клиента — чтобы видеть смену статуса
-    if(useRemote){
-      setInterval(function(){
-        if(!document.getElementById("view-queue").classList.contains("hidden")){
-          load().then(render);
-        }
-      }, 15000);
-    }
-
+    // ----- слушатели (один раз) -----
     document.getElementById("tabQueue").addEventListener("click",function(){switchView("queue"); if(useRemote) load().then(render);});
     document.getElementById("tabForm").addEventListener("click",function(){switchView("form");});
     var crf=document.getElementById("clientRefresh");
@@ -767,6 +824,36 @@
         render();
       });
     });
+    document.getElementById("loginBtn").addEventListener("click", doLogin);
+    document.getElementById("loginPass").addEventListener("keydown", function(e){ if(e.key==="Enter") doLogin(); });
+    document.getElementById("logoutBtn").addEventListener("click", doLogout);
+
+    // ----- режим клиента (как раньше) -----
+    if(CLIENT){
+      await load(); refreshClients(); render();
+      document.body.classList.add("client-mode");
+      document.getElementById("tabQueue").textContent = "Мои платежи";
+      document.getElementById("tabForm").textContent  = "Новая заявка";
+      document.getElementById("tabs").classList.remove("hidden");
+      var sub = document.querySelector(".brand p"); if(sub) sub.textContent="Оставьте заявку — и следите за статусом каждого платежа";
+      var ci = document.querySelector('input[name=client]');
+      if(ci){ ci.value = CLIENT; ci.readOnly = true; }
+      var cn = document.getElementById("clientName"); if(cn) cn.textContent = CLIENT;
+      var mine = items.filter(function(it){ return it.client===CLIENT; });
+      switchView(mine.length ? "queue" : "form");
+      startPoll();
+      return;
+    }
+
+    // ----- режим сотрудника: требуется вход -----
+    document.getElementById("tabs").classList.add("hidden");
+    if(useRemote){
+      var sess = await sb.auth.getSession();
+      if(sess.data && sess.data.session){ await onLoggedIn(); }
+      else { switchView("login"); }
+    } else {
+      await load(); refreshClients(); render(); switchView("queue");
+    }
   }
   if(document.readyState!=="loading") init();
   else document.addEventListener("DOMContentLoaded", init);
