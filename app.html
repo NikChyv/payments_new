@@ -143,6 +143,20 @@
   .staff-box .role{color:var(--muted)}
   .staff-box button{background:#fff;border:1px solid var(--line);border-radius:9px;padding:7px 12px;cursor:pointer;font-size:13px;color:var(--muted)}
   .staff-box button:hover{border-color:var(--accent);color:var(--ink)}
+  /* экран «Клиенты» */
+  .clients-add{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:20px;margin-bottom:16px}
+  .ca-row{display:flex;gap:10px;flex-wrap:wrap}
+  .ca-row input{flex:1;min-width:200px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;font-size:14px}
+  .ca-row select{padding:10px 12px;border:1px solid var(--line);border-radius:10px;font-size:14px;background:#fff}
+  .ca-row button{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px 18px;font-weight:700;cursor:pointer}
+  .ca-row button:hover{background:var(--accent-d)}
+  .cl-card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:10px}
+  .cl-card .nm{font-weight:700;font-size:15px}
+  .cl-card .who{color:var(--muted);font-size:13px;margin-top:3px}
+  .cl-link{display:flex;gap:8px;align-items:center;margin-top:10px}
+  .cl-link code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:#f1f5f9;border-radius:8px;padding:8px 10px;font-size:12.5px;color:#334155}
+  .cl-link button{background:#fff;border:1px solid var(--line);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:13px;color:var(--accent);font-weight:600;white-space:nowrap}
+  .cl-link button:hover{border-color:var(--accent)}
 </style>
 </head>
 <body>
@@ -155,6 +169,7 @@
     </div>
     <div class="tabs" id="tabs">
       <button class="tab active" data-view="queue" id="tabQueue">Очередь платежей</button>
+      <button class="tab" id="tabClients" data-view="clients" style="display:none">Клиенты</button>
       <button class="tab" data-view="form" id="tabForm">Новая заявка</button>
     </div>
     <div class="staff-box hidden" id="staffBox">
@@ -280,6 +295,21 @@
     </div>
   </section>
 
+  <!-- ===== КЛИЕНТЫ (только админ) ===== -->
+  <section id="view-clients" class="hidden">
+    <div class="clients-add">
+      <h2 style="margin:0 0 4px;font-size:19px">Клиенты</h2>
+      <p style="margin:0 0 16px;color:var(--muted);font-size:13.5px">Заведите клиента, закрепите бухгалтера — и получите персональную ссылку для заявок.</p>
+      <div class="ca-row">
+        <input id="ncName" placeholder="Название компании, напр. ООО «Ромашка»">
+        <select id="ncStaff"></select>
+        <button id="ncAdd">Добавить</button>
+      </div>
+      <div class="login-err" id="ncErr"></div>
+    </div>
+    <div id="clientsList"></div>
+  </section>
+
 </main>
 
 <div id="toast"></div>
@@ -314,7 +344,7 @@
       requisites:it.requisites||null, due:it.due, recurrence:it.recurrence,
       purpose:it.purpose||null, status:it.status, need_receipt:!!it.needReceipt,
       file_url:it.file?(it.file.url||null):null, file_name:it.file?it.file.name:null,
-      created_at:it.created||todayStr()
+      created_at:it.created||todayStr(), client_id:it.client_id||null
     };
   }
   function fromRow(r){
@@ -323,7 +353,7 @@
       requisites:r.requisites||"", due:r.due, recurrence:r.recurrence,
       purpose:r.purpose||"", status:r.status, needReceipt:!!r.need_receipt,
       file:(r.file_url||r.file_name)?{name:r.file_name||"файл", url:r.file_url||null}:null,
-      created:r.created_at
+      created:r.created_at, client_id:r.client_id||null
     };
   }
 
@@ -334,6 +364,10 @@
         var res = await sb.from(TABLE).select("*");
         if(res.error) throw res.error;
         items = (res.data||[]).map(fromRow);
+        if(currentStaff && !currentStaff.is_admin){
+          var ids = {}; clientsList.forEach(function(c){ ids[c.id]=1; });
+          items = items.filter(function(it){ return it.client_id && ids[it.client_id]; });
+        }
       }catch(e){ console.error(e); toast("Ошибка чтения из базы — проверьте URL/ключ и таблицу"); items=[]; }
       return;
     }
@@ -436,6 +470,8 @@
   var CLIENT = null; // если задан ?client=… — режим клиента (видит только свои платежи)
   var currentStaff = null;   // профиль вошедшего сотрудника {name, is_admin}
   var _pollStarted = false;
+  var clientsList = [];      // клиенты (для админа — все, для бухгалтера — свои)
+  var staffList = [];        // список сотрудников (для выпадающего списка у админа)
 
   /* ---------- render queue ---------- */
   function activeOpen(it){ return it.status==="new" || it.status==="in_progress"; }
@@ -739,8 +775,10 @@
     document.getElementById("view-queue").classList.toggle("hidden", v!=="queue");
     document.getElementById("view-form").classList.toggle("hidden", v!=="form");
     document.getElementById("view-login").classList.toggle("hidden", v!=="login");
+    document.getElementById("view-clients").classList.toggle("hidden", v!=="clients");
     document.getElementById("tabQueue").classList.toggle("active", v==="queue");
     document.getElementById("tabForm").classList.toggle("active", v==="form");
+    var tc=document.getElementById("tabClients"); if(tc) tc.classList.toggle("active", v==="clients");
     if(v==="queue") render();
   }
 
@@ -750,6 +788,55 @@
     setInterval(function(){
       if(!document.getElementById("view-queue").classList.contains("hidden")){ load().then(render); }
     }, 15000);
+  }
+
+  function staffNameById(sid){
+    for(var i=0;i<staffList.length;i++) if(staffList[i].id===sid) return staffList[i].name;
+    return "—";
+  }
+  function baseLink(token){ return location.origin + location.pathname + "?t=" + encodeURIComponent(token); }
+  function genToken(){
+    var a=new Uint8Array(16); (window.crypto||window.msCrypto).getRandomValues(a);
+    return Array.prototype.map.call(a,function(b){return ("0"+b.toString(16)).slice(-2);}).join("");
+  }
+  async function loadClients(){
+    if(!useRemote){ clientsList=[]; return; }
+    var res = await sb.from("clients").select("*").order("name",{ascending:true});
+    clientsList = res.error ? [] : (res.data||[]);
+  }
+  async function loadStaffList(){
+    if(!useRemote){ staffList=[]; return; }
+    var res = await sb.from("staff").select("id,name,is_admin").order("name",{ascending:true});
+    staffList = res.error ? [] : (res.data||[]);
+  }
+  function renderClients(){
+    var sel=document.getElementById("ncStaff");
+    sel.innerHTML = '<option value="">— бухгалтер —</option>' + staffList.map(function(s){
+      return '<option value="'+s.id+'">'+esc(s.name)+(s.is_admin?" (админ)":"")+'</option>';
+    }).join("");
+    var box=document.getElementById("clientsList");
+    if(!clientsList.length){ box.innerHTML='<div class="empty">Пока нет клиентов. Добавьте первого выше.</div>'; return; }
+    box.innerHTML = clientsList.map(function(c){
+      var link=baseLink(c.token);
+      return '<div class="cl-card">'+
+        '<div class="nm">'+esc(c.name)+'</div>'+
+        '<div class="who">Бухгалтер: '+esc(staffNameById(c.staff_id))+'</div>'+
+        '<div class="cl-link"><code>'+esc(link)+'</code>'+
+        '<button data-copy="'+esc(link)+'">Скопировать ссылку</button></div>'+
+      '</div>';
+    }).join("");
+  }
+  async function addClient(){
+    var name=(document.getElementById("ncName").value||"").trim();
+    var sid=document.getElementById("ncStaff").value;
+    var err=document.getElementById("ncErr"); err.textContent="";
+    if(!name){ err.textContent="Укажите название компании"; return; }
+    if(!sid){ err.textContent="Выберите бухгалтера"; return; }
+    var res=await sb.from("clients").insert({name:name, token:genToken(), staff_id:sid});
+    if(res.error){ err.textContent="Ошибка: "+res.error.message; return; }
+    document.getElementById("ncName").value="";
+    await loadClients(); renderClients();
+    toast("Клиент добавлен");
   }
 
   // вошёл сотрудник: подтянуть профиль (роль) и показать очередь
@@ -768,7 +855,17 @@
     document.getElementById("staffName").textContent = currentStaff.name;
     document.getElementById("staffRole").textContent = currentStaff.is_admin ? "владелец" : "бухгалтер";
     document.getElementById("staffBox").classList.remove("hidden");
-    document.getElementById("tabs").classList.add("hidden");
+    document.getElementById("tabForm").style.display = "none";  // сотрудник не подаёт клиентскую форму
+    await loadClients();
+    if(currentStaff.is_admin){
+      await loadStaffList();
+      renderClients();
+      document.getElementById("tabClients").style.display = "";
+      document.getElementById("tabs").classList.remove("hidden");
+    } else {
+      document.getElementById("tabClients").style.display = "none";
+      document.getElementById("tabs").classList.add("hidden");
+    }
     await load(); refreshClients(); render();
     switchView("queue");
     startPoll();
@@ -789,8 +886,9 @@
 
   async function doLogout(){
     await sb.auth.signOut();
-    currentStaff = null; items = [];
+    currentStaff = null; items = []; clientsList = []; staffList = [];
     document.getElementById("staffBox").classList.add("hidden");
+    document.getElementById("tabs").classList.add("hidden");
     switchView("login");
   }
 
@@ -827,6 +925,15 @@
     document.getElementById("loginBtn").addEventListener("click", doLogin);
     document.getElementById("loginPass").addEventListener("keydown", function(e){ if(e.key==="Enter") doLogin(); });
     document.getElementById("logoutBtn").addEventListener("click", doLogout);
+    document.getElementById("tabClients").addEventListener("click", function(){ switchView("clients"); });
+    document.getElementById("ncAdd").addEventListener("click", addClient);
+    document.getElementById("clientsList").addEventListener("click", function(e){
+      var b=e.target.closest ? e.target.closest("button[data-copy]") : null;
+      if(!b) return;
+      var link=b.getAttribute("data-copy");
+      if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(link).then(function(){toast("Ссылка скопирована");}); }
+      else { toast("Скопируйте ссылку вручную"); }
+    });
 
     // ----- режим клиента (как раньше) -----
     if(CLIENT){
