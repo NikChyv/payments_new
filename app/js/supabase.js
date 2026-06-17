@@ -70,7 +70,9 @@ export async function uploadFile(file) {
   if (!file) return null;
   if (useRemote) {
     try {
-      const path = Date.now() + "_" + file.name.replace(/[^\w.\-]+/g, "_");
+      const rand = crypto.getRandomValues(new Uint8Array(16));
+      const hex = Array.from(rand, b => b.toString(16).padStart(2, "0")).join("");
+      const path = hex + "/" + file.name.replace(/[^\w.\-]+/g, "_");
       const up = await sb.storage.from(BUCKET).upload(path, file);
       if (up.error) throw up.error;
       const pub = sb.storage.from(BUCKET).getPublicUrl(path);
