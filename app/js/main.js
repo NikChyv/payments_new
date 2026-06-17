@@ -5,7 +5,9 @@ import { esc, toast, genId } from './utils.js';
 import { onLoggedIn, doLogin, doLogout } from './auth.js';
 import { addClient, refreshClients } from './clients.js';
 import { render, onListClick } from './queue.js';
-import { renderClient } from './client_view.js';
+import {
+  loadClientByToken, loadPaymentsByToken, submitPaymentByToken, renderClient,
+} from './client_view.js';
 
 // ---------- навигация ----------
 
@@ -18,7 +20,7 @@ function switchView(v) {
   document.getElementById("tabForm").classList.toggle("active",  v === "form");
   const tc = document.getElementById("tabClients");
   if (tc) tc.classList.toggle("active", v === "clients");
-  if (v === "queue") { state.CLIENT ? renderClient() : render(); }
+  if (v === "queue") { state.TOKEN ? renderClient() : render(); }
 }
 
 // ---------- поллинг ----------
@@ -27,8 +29,11 @@ function startPoll() {
   if (state._pollStarted || !useRemote) return;
   state._pollStarted = true;
   setInterval(() => {
-    if (!document.getElementById("view-queue").classList.contains("hidden")) {
-      load().then(() => state.CLIENT ? renderClient() : render());
+    if (document.getElementById("view-queue").classList.contains("hidden")) return;
+    if (state.TOKEN) {
+      loadPaymentsByToken(state.TOKEN).then(renderClient);
+    } else {
+      load().then(render);
     }
   }, 15000);
 }
@@ -44,36 +49,60 @@ async function onSubmit(e) {
   submitBtn.disabled = true; submitBtn.textContent = "Отправляем…";
 
   const fileObj = await uploadFile(fileInput.files[0]);
-  const rec = {
-    id: genId(), client: f.client.value.trim(), payee: f.payee.value.trim(),
-    amount: parseFloat(f.amount.value) || 0, requisites: f.requisites.value.trim(),
-    due: f.due.value, recurrence: f.recurrence.value, purpose: f.purpose.value.trim(),
-    status: "new", needReceipt: f.needReceipt.checked, file: fileObj, created: todayStr(),
-  };
-  state.items.push(rec);
-  save();
+
+  try {
+    if (state.TOKEN) {
+      // Шаг 7: через RPC submit_payment — заявка сама привязывается к клиенту и бухгалтеру
+      await submitPaymentByToken(
+        state.TOKEN,
+        f.payee.value.trim(),
+        parseFloat(f.amount.value) || 0,
+        f.requisites.value.trim(),
+        f.due.value,
+        f.recurrence.value,
+        f.purpose.value.trim(),
+        f.needReceipt.checked,
+        fileObj,
+      );
+    } else {
+      // офлайн / сотрудник-форма
+      const rec = {
+        id: genId(), client: f.client.value.trim(), payee: f.payee.value.trim(),
+        amount: parseFloat(f.amount.value) || 0, requisites: f.requisites.value.trim(),
+        due: f.due.value, recurrence: f.recurrence.value, purpose: f.purpose.value.trim(),
+        status: "new", needReceipt: f.needReceipt.checked, file: fileObj, created: todayStr(),
+      };
+      state.items.push(rec);
+      save();
+    }
+  } catch(err) {
+    console.error(err);
+    toast("Ошибка отправки: " + (err.message || err));
+    submitBtn.disabled = false; submitBtn.textContent = oldTxt;
+    return;
+  }
 
   submitBtn.disabled = false; submitBtn.textContent = oldTxt;
 
-  const lockedClient = state.CLIENT;
+  const sentPayee = f.payee.value.trim();
+  const sentDue   = f.due.value;
   f.reset();
   const dueEl = document.querySelector('input[name=due]');
   if (dueEl) dueEl.value = todayStr();
-  if (lockedClient) f.client.value = lockedClient;
+  if (state.TOKEN && state.clientInfo) f.client.value = state.clientInfo.name;
 
   const ok = document.getElementById("okMsg");
-  ok.textContent = "✓ Поручение отправлено бухгалтеру. Платёж «" + rec.payee + "» на " + fmtDate(rec.due) + " уже в очереди.";
+  ok.textContent = "✓ Поручение отправлено бухгалтеру. Платёж «" + sentPayee + "» на " + fmtDate(sentDue) + " уже в очереди.";
   ok.className = "ok-msg show";
   setTimeout(() => { ok.className = "ok-msg"; }, 6000);
 
-  refreshClients();
-
-  if (state.CLIENT) {
+  if (state.TOKEN) {
     switchView("queue");
-    if (useRemote) { await load(); }
+    await loadPaymentsByToken(state.TOKEN);
     renderClient();
     toast("Заявка отправлена — статус виден ниже");
   } else {
+    refreshClients();
     toast("Заявка добавлена в очередь");
   }
 }
@@ -81,7 +110,8 @@ async function onSubmit(e) {
 // ---------- init ----------
 
 async function init() {
-  state.CLIENT = new URLSearchParams(location.search).get("client") || null;
+  const params = new URLSearchParams(location.search);
+  state.TOKEN = params.get("t") || null;
 
   const dueEl = document.querySelector('input[name=due]');
   if (dueEl) dueEl.value = todayStr();
@@ -89,19 +119,24 @@ async function init() {
   // ----- слушатели -----
   document.getElementById("tabQueue").addEventListener("click", () => {
     switchView("queue");
-    if (!state.CLIENT && useRemote) load().then(render);
+    if (!state.TOKEN && useRemote) load().then(render);
   });
   document.getElementById("tabForm").addEventListener("click", () => switchView("form"));
   document.getElementById("tabClients").addEventListener("click", () => switchView("clients"));
 
   const crf = document.getElementById("clientRefresh");
   if (crf) crf.addEventListener("click", () => {
-    if (useRemote) { load().then(() => { state.CLIENT ? renderClient() : render(); toast("Обновлено"); }); }
-    else { state.CLIENT ? renderClient() : render(); }
+    if (state.TOKEN) {
+      loadPaymentsByToken(state.TOKEN).then(() => { renderClient(); toast("Обновлено"); });
+    } else if (useRemote) {
+      load().then(() => { render(); toast("Обновлено"); });
+    } else {
+      render();
+    }
   });
 
   document.getElementById("list").addEventListener("click", e => {
-    if (!state.CLIENT) onListClick(e);
+    if (!state.TOKEN) onListClick(e); // клиент не управляет статусами
   });
 
   document.getElementById("payForm").addEventListener("submit", onSubmit);
@@ -166,8 +201,8 @@ async function init() {
     }
   });
 
-  // ----- режим клиента (?client=…) -----
-  if (state.CLIENT) {
+  // ----- режим клиента по токену (?t=…) -----
+  if (state.TOKEN) {
     document.body.classList.add("client-mode");
     document.getElementById("tabQueue").textContent = "Мои платежи";
     document.getElementById("tabForm").textContent  = "Новая заявка";
@@ -175,14 +210,31 @@ async function init() {
     const sub = document.querySelector(".brand p");
     if (sub) sub.textContent = "Оставьте заявку — и следите за статусом каждого платежа";
 
+    if (!useRemote) {
+      document.getElementById("list").innerHTML =
+        '<div class="empty">Режим по токену требует подключения к базе данных.</div>';
+      switchView("queue");
+      return;
+    }
+
+    const clientName = await loadClientByToken(state.TOKEN);
+    if (!clientName) {
+      document.getElementById("list").innerHTML =
+        '<div class="empty">Ссылка недействительна. Обратитесь к бухгалтеру.</div>';
+      switchView("queue");
+      return;
+    }
+
+    state.clientInfo = {name: clientName};
+
     const ci = document.querySelector('input[name=client]');
-    if (ci) { ci.value = state.CLIENT; ci.readOnly = true; }
+    if (ci) { ci.value = clientName; ci.readOnly = true; }
 
     const cn = document.getElementById("clientName");
-    if (cn) cn.textContent = state.CLIENT;
+    if (cn) cn.textContent = clientName;
 
-    await load(); refreshClients(); renderClient();
-    switchView(state.items.filter(it => it.client === state.CLIENT).length ? "queue" : "form");
+    await loadPaymentsByToken(state.TOKEN);
+    switchView(state.items.length ? "queue" : "form");
     startPoll();
     return;
   }

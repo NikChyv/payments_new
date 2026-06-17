@@ -1,8 +1,44 @@
+import { sb, useRemote, fromRow } from './supabase.js';
 import { state } from './state.js';
 import { esc } from './utils.js';
-import { daysBetween, fmtDate, fmtMoney } from './dates.js';
+import { fmtDate, fmtMoney } from './dates.js';
 
 const recLbl = {once:"Разовый", weekly:"Еженедельно", monthly:"Ежемесячно"};
+
+// ---------- Supabase RPC (Шаг 7) ----------
+
+export async function loadClientByToken(token) {
+  if (!useRemote) return null;
+  const res = await sb.rpc("client_by_token", {p_token: token});
+  if (res.error || res.data == null) return null;
+  return res.data; // text — название компании
+}
+
+export async function loadPaymentsByToken(token) {
+  if (!useRemote) { state.items = []; return; }
+  const res = await sb.rpc("list_payments_by_token", {p_token: token});
+  if (res.error) { console.error(res.error); state.items = []; return; }
+  state.items = (res.data || []).map(fromRow);
+}
+
+export async function submitPaymentByToken(token, payee, amount, requisites, due, recurrence, purpose, needReceipt, fileObj) {
+  const res = await sb.rpc("submit_payment", {
+    p_token:        token,
+    p_payee:        payee,
+    p_amount:       amount,
+    p_requisites:   requisites || null,
+    p_due:          due,
+    p_recurrence:   recurrence,
+    p_purpose:      purpose    || null,
+    p_need_receipt: needReceipt,
+    p_file_url:     fileObj ? (fileObj.url  || null) : null,
+    p_file_name:    fileObj ? (fileObj.name || null) : null,
+  });
+  if (res.error) throw res.error;
+  return res.data; // id нового платежа
+}
+
+// ---------- Рендер клиентского списка ----------
 
 function activeOpen(it) { return it.status === "new" || it.status === "in_progress"; }
 
@@ -55,13 +91,11 @@ function rowHtmlClient(it) {
 
 export function renderClient() {
   const list = document.getElementById("list");
-  const rows = state.items
-    .filter(it => it.client === state.CLIENT)
-    .sort((a, b) => {
-      const ao = activeOpen(a) ? 0 : 1, bo = activeOpen(b) ? 0 : 1;
-      if (ao !== bo) return ao - bo;
-      return a.due < b.due ? -1 : a.due > b.due ? 1 : 0;
-    });
+  const rows = state.items.slice().sort((a, b) => {
+    const ao = activeOpen(a) ? 0 : 1, bo = activeOpen(b) ? 0 : 1;
+    if (ao !== bo) return ao - bo;
+    return a.due < b.due ? -1 : a.due > b.due ? 1 : 0;
+  });
   if (rows.length === 0) {
     list.innerHTML = '<div class="empty">Здесь появятся ваши платежи после отправки заявки.</div>';
     return;

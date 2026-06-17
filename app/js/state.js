@@ -4,6 +4,7 @@ export const state = {
   clientsList: [],      // список клиентов (для админа — все, для бухгалтера — свои)
   staffList: [],        // список сотрудников (для выпадающего у админа)
   quickFilter: "",      // фильтр по карточкам-счётчикам
-  CLIENT: null,         // строка из ?client=… — режим клиента (old)
+  TOKEN: null,          // токен из ?t=<token> — режим клиента по токену
+  clientInfo: null,     // {name} из client_by_token
   _pollStarted: false,
 };
