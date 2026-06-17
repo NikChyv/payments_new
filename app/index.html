@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Платежи под контролем</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <div class="wrap topbar">
+    <div class="logo">Br</div>
+    <div class="brand">
+      <h1>Платежи под контролем</h1>
+      <p>Поручения клиентов — в одном месте, без стикеров</p>
+    </div>
+    <div class="tabs" id="tabs">
+      <button class="tab active" data-view="queue" id="tabQueue">Очередь платежей</button>
+      <button class="tab" id="tabClients" data-view="clients" style="display:none">Клиенты</button>
+      <button class="tab" data-view="form" id="tabForm">Новая заявка</button>
+    </div>
+    <div class="staff-box hidden" id="staffBox">
+      <span><span class="nm" id="staffName"></span> · <span class="role" id="staffRole"></span></span>
+      <button id="logoutBtn">Выйти</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ===== QUEUE (accountant) ===== -->
+  <section id="view-queue">
+    <div class="banner" id="banner"></div>
+
+    <div class="cards">
+      <div class="scard red" data-filter="overdue"><div class="n" id="cOverdue">0</div><div class="l">Просрочено</div></div>
+      <div class="scard orange" data-filter="today"><div class="n" id="cToday">0</div><div class="l">На сегодня</div></div>
+      <div class="scard gray" data-filter="week"><div class="n" id="cWeek">0</div><div class="l">Ближайшие 7 дней</div></div>
+      <div class="scard blue" data-filter="prog"><div class="n" id="cProg">0</div><div class="l">В работе</div></div>
+      <div class="scard purple" data-filter="await_doc"><div class="n" id="cDoc">0</div><div class="l">Отправить документ</div></div>
+    </div>
+
+    <div class="toolbar">
+      <input type="text" id="search" placeholder="Поиск: клиент, получатель, назначение…">
+      <select id="fClient"><option value="">Все клиенты</option></select>
+      <select id="fStatus">
+        <option value="active">Активные (не закрытые)</option>
+        <option value="all">Все статусы</option>
+        <option value="new">Новые</option>
+        <option value="in_progress">В работе</option>
+        <option value="paid">Оплаченные</option>
+        <option value="await_doc">Отправить платёжный документ</option>
+        <option value="sent">Документ отправлен</option>
+      </select>
+      <button class="ghost" id="clearFilter">Сбросить</button>
+    </div>
+
+    <div id="clientHead" class="client-only">
+      <div class="mylist-top">
+        <h2>Мои платежи</h2>
+        <span class="who" id="clientName"></span>
+        <button class="ghost" id="clientRefresh">Обновить</button>
+      </div>
+      <p class="mylist-sub">Статус каждого поручения обновляется автоматически. Как только бухгалтер оплатит — вы сразу увидите ✅.</p>
+    </div>
+
+    <div id="list"></div>
+  </section>
+
+  <!-- ===== FORM (client) ===== -->
+  <section id="view-form" class="hidden">
+    <div class="ok-msg" id="okMsg"></div>
+    <form class="form" id="payForm" autocomplete="off">
+      <h2>Поручение на оплату</h2>
+      <p class="sub">Заполните поля — бухгалтер сразу увидит заявку в очереди со сроком. Так платёж не потеряется.</p>
+
+      <div class="fg">
+        <label>Ваша компания (клиент) <span class="req">*</span></label>
+        <input name="client" list="clientsDl" required placeholder="Например: ООО «Ромашка»">
+        <datalist id="clientsDl"></datalist>
+      </div>
+
+      <div class="fg">
+        <label>Кому платим (получатель) <span class="req">*</span></label>
+        <input name="payee" required placeholder="Название контрагента">
+      </div>
+
+      <div class="two">
+        <div class="fg">
+          <label>Сумма, Br <span class="req">*</span></label>
+          <input name="amount" type="number" min="1" step="0.01" required placeholder="0,00">
+        </div>
+        <div class="fg">
+          <label>УНП / реквизиты или счёт</label>
+          <input name="requisites" placeholder="УНП, р/с или № счёта">
+        </div>
+      </div>
+
+      <div class="two">
+        <div class="fg">
+          <label>Дата платежа <span class="req">*</span></label>
+          <input name="due" type="date" required>
+        </div>
+        <div class="fg">
+          <label>Периодичность <span class="req">*</span></label>
+          <select name="recurrence" required>
+            <option value="once">Разовый</option>
+            <option value="weekly">Еженедельно</option>
+            <option value="monthly">Ежемесячно</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="fg">
+        <label>Назначение платежа</label>
+        <textarea name="purpose" placeholder="За что платим: договор, счёт, период…"></textarea>
+      </div>
+
+      <div class="fg">
+        <label>Счёт / накладная / фото (необязательно)</label>
+        <input name="file" type="file" id="fileInput" accept="image/*,.pdf">
+        <div class="hint">Можно приложить фото счёта — бухгалтеру не придётся переспрашивать.</div>
+      </div>
+
+      <div class="fg">
+        <label><input type="checkbox" name="needReceipt" checked style="width:auto;margin-right:7px"> Нужен платёжный документ после оплаты</label>
+      </div>
+
+      <button type="submit" class="submit">Отправить поручение</button>
+    </form>
+  </section>
+
+  <!-- ===== ВХОД (бухгалтер/админ) ===== -->
+  <section id="view-login" class="hidden">
+    <div class="login-card">
+      <h2>Вход для бухгалтера</h2>
+      <p>Войдите, чтобы увидеть очередь платежей.</p>
+      <input id="loginEmail" type="email" placeholder="email" autocomplete="username">
+      <input id="loginPass" type="password" placeholder="пароль" autocomplete="current-password">
+      <button id="loginBtn">Войти</button>
+      <div class="login-err" id="loginErr"></div>
+    </div>
+  </section>
+
+  <!-- ===== КЛИЕНТЫ (только админ) ===== -->
+  <section id="view-clients" class="hidden">
+    <div class="clients-add">
+      <h2 style="margin:0 0 4px;font-size:19px">Клиенты</h2>
+      <p style="margin:0 0 16px;color:var(--muted);font-size:13.5px">Заведите клиента, закрепите бухгалтера — и получите персональную ссылку для заявок.</p>
+      <div class="ca-row">
+        <input id="ncName" placeholder="Название компании, напр. ООО «Ромашка»">
+        <select id="ncStaff"></select>
+        <button id="ncAdd">Добавить</button>
+      </div>
+      <div class="login-err" id="ncErr"></div>
+    </div>
+    <div id="clientsList"></div>
+  </section>
+
+</main>
+
+<div id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
