@@ -12,9 +12,10 @@ declare
   rec       record;
   msg       text;
   today     text;
-  cnt       int  := 0;
-  bot_token text := '<TELEGRAM_BOT_TOKEN>';   -- подставить при выполнении
-  chat_id   text := '<TELEGRAM_CHAT_ID>';     -- подставить при выполнении
+  cnt       int    := 0;
+  bot_token text   := '<TELEGRAM_BOT_TOKEN>';            -- подставить при выполнении
+  chat_ids  text[] := array['<CHAT_ID_1>', '<CHAT_ID_2>'];  -- получатели, через запятую
+  cid       text;
 begin
   today := to_char(now() at time zone 'Europe/Minsk', 'YYYY-MM-DD');
   msg := '📅 <b>Платежи на ' || to_char(now() at time zone 'Europe/Minsk', 'DD.MM.YYYY') || '</b>'
@@ -48,16 +49,18 @@ begin
     msg := msg || '💼 Всего: ' || cnt;
   end if;
 
-  perform net.http_post(
-    url     := 'https://api.telegram.org/bot' || bot_token || '/sendMessage',
-    headers := '{"Content-Type":"application/json"}'::jsonb,
-    body    := json_build_object(
-                 'chat_id',                 chat_id,
-                 'text',                    msg,
-                 'parse_mode',              'HTML',
-                 'disable_web_page_preview', true
-               )::jsonb
-  );
+  foreach cid in array chat_ids loop
+    perform net.http_post(
+      url     := 'https://api.telegram.org/bot' || bot_token || '/sendMessage',
+      headers := '{"Content-Type":"application/json"}'::jsonb,
+      body    := json_build_object(
+                   'chat_id',                 cid,
+                   'text',                    msg,
+                   'parse_mode',              'HTML',
+                   'disable_web_page_preview', true
+                 )::jsonb
+    );
+  end loop;
 end;
 $$;
 

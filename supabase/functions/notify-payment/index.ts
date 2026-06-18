@@ -1,7 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
-const BOT  = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
-const CHAT = Deno.env.get("TELEGRAM_CHAT_ID")!;
+const BOT   = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
+// TELEGRAM_CHAT_ID — один или несколько chat_id через запятую, напр. "111,222"
+const CHATS = Deno.env.get("TELEGRAM_CHAT_ID")!.split(",").map(s => s.trim()).filter(Boolean);
 
 const months = ["янв","фев","мар","апр","мая","июн","июл","авг","сен","окт","ноя","дек"];
 
@@ -31,22 +32,20 @@ serve(async (req) => {
       record.file_url   ? `📎 <a href="${record.file_url}">Открыть файл</a>` : null,
     ].filter(Boolean).join("\n");
 
-    const res = await fetch(`https://api.telegram.org/bot${BOT}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: CHAT,
-        text: lines,
-        parse_mode: "HTML",
-        disable_web_page_preview: true,
-      }),
-    });
-
-    if (!res.ok) {
-      const err = await res.text();
-      console.error("Telegram error:", err);
-      return new Response("telegram error", { status: 500 });
-    }
+    // шлём каждому получателю отдельно; ошибка одного не блокирует остальных
+    await Promise.all(CHATS.map(async (chat) => {
+      const res = await fetch(`https://api.telegram.org/bot${BOT}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chat,
+          text: lines,
+          parse_mode: "HTML",
+          disable_web_page_preview: true,
+        }),
+      });
+      if (!res.ok) console.error(`Telegram error for ${chat}:`, await res.text());
+    }));
 
     return new Response("ok");
   } catch (e) {
