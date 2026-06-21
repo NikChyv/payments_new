@@ -239,6 +239,9 @@ async function handleMessage(msg: any) {
   if (text.startsWith("/start")) {
     const token = text.split(/\s+/)[1];
     if (!token) { await send(chatId, "Привет! Откройте персональную ссылку от бухгалтера и нажмите «Старт»."); return; }
+    // снимаем привязку этого Telegram со всех клиентов, иначе один telegram_id
+    // может оказаться у нескольких клиентов и поиск перестаёт работать
+    await sb.from("clients").update({ telegram_id: null }).eq("telegram_id", chatId);
     const { data, error } = await sb.from("clients").update({ telegram_id: chatId }).eq("token", token).select("name").maybeSingle();
     if (error || !data) await send(chatId, "Ссылка недействительна. Обратитесь к бухгалтеру.");
     else await send(chatId, `Готово! Аккаунт «${data.name}» привязан.\n\n${HELP}`);
