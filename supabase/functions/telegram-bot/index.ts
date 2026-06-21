@@ -248,6 +248,7 @@ async function handleMessage(msg: any) {
     return;
   }
   if (text === "/help") { await send(chatId, HELP); return; }
+  if (text === "/myid") { await send(chatId, `Ваш chat_id: <code>${chatId}</code>`); return; }
 
   const client = await getClient(tgId);
   if (!client) { await send(chatId, "Вы ещё не привязаны. Откройте персональную ссылку от бухгалтера и нажмите «Старт»."); return; }
