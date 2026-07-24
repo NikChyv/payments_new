@@ -38,6 +38,26 @@ export async function submitPaymentByToken(token, payee, amount, requisites, due
   return res.data; // id нового платежа
 }
 
+// Фича 2: клиент правит свою заявку, пока она 'new'. Файл: если новый не
+// приложен (fileObj пустой) — сервер сохраняет прежний.
+export async function editPaymentByToken(token, id, payee, amount, requisites, due, recurrence, purpose, needReceipt, fileObj) {
+  const res = await sb.rpc("edit_payment_by_token", {
+    p_token:        token,
+    p_id:           id,
+    p_payee:        payee,
+    p_amount:       amount,
+    p_requisites:   requisites || null,
+    p_due:          due,
+    p_recurrence:   recurrence,
+    p_purpose:      purpose    || null,
+    p_need_receipt: needReceipt,
+    p_file_url:     fileObj ? (fileObj.url  || null) : null,
+    p_file_name:    fileObj ? (fileObj.name || null) : null,
+  });
+  if (res.error) throw res.error;
+  return res.data;
+}
+
 // ---------- Рендер клиентского списка ----------
 
 function activeOpen(it) { return it.status === "new" || it.status === "in_progress"; }
@@ -75,6 +95,10 @@ function rowHtmlClient(it) {
     ? `<a class="badge b-file" href="${esc(it.file.url)}" target="_blank" rel="noopener" title="Открыть файл">📎 ${esc(it.file.name)}</a>`
     : `<span class="badge b-file" title="${esc(it.file.name)}">📎 ${esc(it.file.name)}</span>`) : "";
   const recBadge = it.recurrence !== "once" ? `<span class="badge b-rec">🔁 ${recLbl[it.recurrence]}</span>` : "";
+  // Пока заявка не взята в работу (status 'new') — клиент может её отредактировать.
+  const editBtn = it.status === "new"
+    ? `<button class="ghost cl-edit" data-edit="${esc(it.id)}">✏️ Редактировать</button>`
+    : "";
   return `<div class="row b-${done ? "green" : "gray"}">` +
     `<div class="main">` +
       `<div class="head"><span class="payee">${esc(it.payee)}</span><span class="amount">${fmtMoney(it.amount)}</span></div>` +
@@ -83,7 +107,7 @@ function rowHtmlClient(it) {
         (it.purpose    ? `<span>${esc(it.purpose)}</span>`    : "") +
         (it.requisites ? `<span>${esc(it.requisites)}</span>` : "") +
       `</div>` +
-      `<div class="cl-status"><span class="cl-now ${s.cls}">${s.icon} ${s.text}</span>${recBadge}${fileBadge}</div>` +
+      `<div class="cl-status"><span class="cl-now ${s.cls}">${s.icon} ${s.text}</span>${recBadge}${fileBadge}${editBtn}</div>` +
       clSteps(it) +
     `</div>` +
   `</div>`;

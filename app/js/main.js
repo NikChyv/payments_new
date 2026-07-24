@@ -6,7 +6,7 @@ import { onLoggedIn, doLogin, doLogout } from './auth.js';
 import { addClient, refreshClients } from './clients.js';
 import { render, onListClick } from './queue.js';
 import {
-  loadClientByToken, loadPaymentsByToken, submitPaymentByToken, renderClient,
+  loadClientByToken, loadPaymentsByToken, submitPaymentByToken, editPaymentByToken, renderClient,
 } from './client_view.js';
 
 // ---------- навигация ----------
@@ -38,6 +38,50 @@ function startPoll() {
   }, 15000);
 }
 
+// ---------- режим редактирования заявки (клиент) ----------
+
+function setFormMode(editing) {
+  const title = document.getElementById("formTitle");
+  const sub   = document.getElementById("formSub");
+  const btn   = document.querySelector("#payForm .submit");
+  if (editing) {
+    if (title) title.textContent = "Редактирование заявки";
+    if (sub)   sub.textContent   = "Измените нужные поля и сохраните. Доступно, пока бухгалтер не взял заявку в работу.";
+    if (btn)   btn.textContent   = "Сохранить изменения";
+  } else {
+    if (title) title.textContent = "Поручение на оплату";
+    if (sub)   sub.textContent   = "Заполните поля — бухгалтер сразу увидит заявку в очереди со сроком. Так платёж не потеряется.";
+    if (btn)   btn.textContent   = "Отправить поручение";
+  }
+}
+
+function fillFormForEdit(it) {
+  const f = document.getElementById("payForm");
+  f.payee.value       = it.payee || "";
+  f.amount.value      = it.amount != null ? it.amount : "";
+  f.requisites.value  = it.requisites || "";
+  f.due.value         = it.due || todayStr();
+  f.recurrence.value  = it.recurrence || "once";
+  f.purpose.value     = it.purpose || "";
+  f.needReceipt.checked = !!it.needReceipt;
+  // файл заранее подставить нельзя; если клиент не приложит новый — сохранится прежний
+  const fi = document.getElementById("fileInput");
+  if (fi) fi.value = "";
+  state.editingId = it.id;
+  setFormMode(true);
+  switchView("form");
+}
+
+function resetFormNew() {
+  const f = document.getElementById("payForm");
+  f.reset();
+  state.editingId = null;
+  const dueEl = document.querySelector('input[name=due]');
+  if (dueEl) dueEl.value = todayStr();
+  if (state.TOKEN && state.clientInfo) f.client.value = state.clientInfo.name;
+  setFormMode(false);
+}
+
 // ---------- отправка формы ----------
 
 async function onSubmit(e) {
@@ -45,13 +89,26 @@ async function onSubmit(e) {
   const f = e.target;
   const fileInput = document.getElementById("fileInput");
   const submitBtn = f.querySelector(".submit");
-  const oldTxt = submitBtn.textContent;
-  submitBtn.disabled = true; submitBtn.textContent = "Отправляем…";
+  const wasEditing = !!(state.TOKEN && state.editingId);
+  submitBtn.disabled = true; submitBtn.textContent = wasEditing ? "Сохраняем…" : "Отправляем…";
 
   const fileObj = await uploadFile(fileInput.files[0]);
 
   try {
-    if (state.TOKEN) {
+    if (state.TOKEN && state.editingId) {
+      // Фича 2: редактирование своей заявки (пока status='new')
+      await editPaymentByToken(
+        state.TOKEN, state.editingId,
+        f.payee.value.trim(),
+        parseFloat(f.amount.value) || 0,
+        f.requisites.value.trim(),
+        f.due.value,
+        f.recurrence.value,
+        f.purpose.value.trim(),
+        f.needReceipt.checked,
+        fileObj,
+      );
+    } else if (state.TOKEN) {
       // Шаг 7: через RPC submit_payment — заявка сама привязывается к клиенту и бухгалтеру
       await submitPaymentByToken(
         state.TOKEN,
@@ -77,31 +134,37 @@ async function onSubmit(e) {
     }
   } catch(err) {
     console.error(err);
-    toast("Ошибка отправки: " + (err.message || err));
-    submitBtn.disabled = false; submitBtn.textContent = oldTxt;
+    toast("Ошибка: " + (err.message || err));
+    submitBtn.disabled = false; setFormMode(wasEditing);
     return;
   }
 
-  submitBtn.disabled = false; submitBtn.textContent = oldTxt;
+  submitBtn.disabled = false;
 
   const sentPayee = f.payee.value.trim();
   const sentDue   = f.due.value;
-  f.reset();
-  const dueEl = document.querySelector('input[name=due]');
-  if (dueEl) dueEl.value = todayStr();
-  if (state.TOKEN && state.clientInfo) f.client.value = state.clientInfo.name;
-
-  const ok = document.getElementById("okMsg");
-  ok.textContent = "✓ Поручение отправлено бухгалтеру. Платёж «" + sentPayee + "» на " + fmtDate(sentDue) + " уже в очереди.";
-  ok.className = "ok-msg show";
-  setTimeout(() => { ok.className = "ok-msg"; }, 6000);
 
   if (state.TOKEN) {
+    resetFormNew(); // сбрасывает editingId, форму, метку кнопки, имя клиента
+    const ok = document.getElementById("okMsg");
+    ok.textContent = wasEditing
+      ? "✓ Заявка обновлена. Платёж «" + sentPayee + "» на " + fmtDate(sentDue) + " — актуальные данные в очереди."
+      : "✓ Поручение отправлено бухгалтеру. Платёж «" + sentPayee + "» на " + fmtDate(sentDue) + " уже в очереди.";
+    ok.className = "ok-msg show";
+    setTimeout(() => { ok.className = "ok-msg"; }, 6000);
     switchView("queue");
     await loadPaymentsByToken(state.TOKEN);
     renderClient();
-    toast("Заявка отправлена — статус виден ниже");
+    toast(wasEditing ? "Заявка обновлена" : "Заявка отправлена — статус виден ниже");
   } else {
+    f.reset();
+    setFormMode(false); // вернуть текст кнопки «Отправить поручение»
+    const dueEl = document.querySelector('input[name=due]');
+    if (dueEl) dueEl.value = todayStr();
+    const ok = document.getElementById("okMsg");
+    ok.textContent = "✓ Поручение отправлено бухгалтеру. Платёж «" + sentPayee + "» на " + fmtDate(sentDue) + " уже в очереди.";
+    ok.className = "ok-msg show";
+    setTimeout(() => { ok.className = "ok-msg"; }, 6000);
     refreshClients();
     toast("Заявка добавлена в очередь");
   }
@@ -121,7 +184,10 @@ async function init() {
     switchView("queue");
     if (!state.TOKEN && useRemote) load().then(render);
   });
-  document.getElementById("tabForm").addEventListener("click", () => switchView("form"));
+  document.getElementById("tabForm").addEventListener("click", () => {
+    if (state.TOKEN) resetFormNew(); // «Новая заявка» всегда чистая, без остатка редактирования
+    switchView("form");
+  });
   document.getElementById("tabClients").addEventListener("click", () => switchView("clients"));
 
   const crf = document.getElementById("clientRefresh");
@@ -136,7 +202,11 @@ async function init() {
   });
 
   document.getElementById("list").addEventListener("click", e => {
-    if (!state.TOKEN) onListClick(e); // клиент не управляет статусами
+    if (!state.TOKEN) { onListClick(e); return; } // сотрудник управляет статусами
+    const btn = e.target.closest && e.target.closest("button[data-edit]");
+    if (!btn) return;
+    const it = state.items.find(x => String(x.id) === btn.getAttribute("data-edit"));
+    if (it) fillFormForEdit(it);
   });
 
   document.getElementById("payForm").addEventListener("submit", onSubmit);

@@ -71,8 +71,8 @@
   <section id="view-form" class="hidden">
     <div class="ok-msg" id="okMsg"></div>
     <form class="form" id="payForm" autocomplete="off">
-      <h2>Поручение на оплату</h2>
-      <p class="sub">Заполните поля — бухгалтер сразу увидит заявку в очереди со сроком. Так платёж не потеряется.</p>
+      <h2 id="formTitle">Поручение на оплату</h2>
+      <p class="sub" id="formSub">Заполните поля — бухгалтер сразу увидит заявку в очереди со сроком. Так платёж не потеряется.</p>
 
       <div class="fg">
         <label>Ваша компания (клиент) <span class="req">*</span></label>
@@ -123,7 +123,7 @@
       </div>
 
       <div class="fg">
-        <label><input type="checkbox" name="needReceipt" checked style="width:auto;margin-right:7px"> Нужен платёжный документ после оплаты</label>
+        <label><input type="checkbox" name="needReceipt" style="width:auto;margin-right:7px"> Нужен платёжный документ после оплаты</label>
       </div>
 
       <button type="submit" class="submit">Отправить поручение</button>

@@ -6,5 +6,6 @@ export const state = {
   quickFilter: "",      // фильтр по карточкам-счётчикам
   TOKEN: null,          // токен из ?t=<token> — режим клиента по токену
   clientInfo: null,     // {name} из client_by_token
+  editingId: null,      // id заявки, которую клиент сейчас редактирует (null = новая)
   _pollStarted: false,
 };

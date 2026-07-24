@@ -19,11 +19,25 @@ serve(async (req) => {
     const rec = body.record;
     const old = body.old_record;
 
-    // только реальная смена статуса на «оплачено» / «документ отправлен»
     if (body.type !== "UPDATE" || !rec || !old) return new Response("skip");
-    if (old.status === rec.status) return new Response("skip");
-    if (rec.status !== "paid" && rec.status !== "sent") return new Response("skip");
     if (!rec.client_id) return new Response("no client");
+
+    // Уведомляем только при ПЕРВОМ переходе в статус и только один раз за жизнь
+    // платежа (флаг). Двойной клик (old.status === new.status) отсекается сам;
+    // сценарий «оплатил → отменил → снова оплатил» гасится флагом.
+    let text: string | null = null;
+    let flagField: "client_paid_notified" | "client_sent_notified" | null = null;
+
+    if (rec.status === "paid" && old.status !== "paid" && !rec.client_paid_notified) {
+      text = `✅ Ваш платёж «${rec.payee}» на ${fmtMoney(Number(rec.amount))} оплачен.`
+           + (rec.need_receipt ? "\n📄 Готовим платёжный документ." : "");
+      flagField = "client_paid_notified";
+    } else if (rec.status === "sent" && old.status !== "sent" && !rec.client_sent_notified) {
+      text = `📄 Платёжный документ по «${rec.payee}» отправлен.`;
+      flagField = "client_sent_notified";
+    }
+
+    if (!text || !flagField) return new Response("skip");
 
     // telegram_id привязанного клиента
     const { data: client } = await sb
@@ -34,15 +48,7 @@ serve(async (req) => {
 
     if (!client || !client.telegram_id) return new Response("no telegram");
 
-    let text: string;
-    if (rec.status === "paid") {
-      text = `✅ Ваш платёж «${rec.payee}» на ${fmtMoney(Number(rec.amount))} оплачен.`
-           + (rec.need_receipt ? "\n📄 Готовим платёжный документ." : "");
-    } else {
-      text = `📄 Платёжный документ по «${rec.payee}» отправлен.`;
-    }
-
-    await fetch(`https://api.telegram.org/bot${BOT}/sendMessage`, {
+    const resp = await fetch(`https://api.telegram.org/bot${BOT}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -52,6 +58,14 @@ serve(async (req) => {
         disable_web_page_preview: true,
       }),
     });
+
+    // помечаем как уведомлённого только при успешной отправке
+    // (обновление флага снова триггерит webhook, но там old.status === new.status → skip)
+    if (resp.ok) {
+      await sb.from("payments").update({ [flagField]: true }).eq("id", rec.id);
+    } else {
+      console.error("Telegram error:", await resp.text());
+    }
 
     return new Response("ok");
   } catch (e) {
