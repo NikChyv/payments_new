@@ -1,0 +1,84 @@
+-- pgTAP-тесты клиентской (anon) поверхности: изоляция по токену, дефолты,
+-- правила редактирования, отсутствие прямого доступа anon к payments.
+-- Запуск: supabase test db (локально и в CI). Транзакция откатывается.
+
+begin;
+select plan(9);
+
+-- ---- setup: два клиента с токенами (без бухгалтера) ----
+insert into clients (id, name, token, staff_id) values
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Client A', 'tokA', null),
+  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'Client B', 'tokB', null);
+
+-- по одному платежу каждому через боевой RPC submit_payment
+select submit_payment('tokA','PayeeA',100,'U',current_date,'once','p',null,null,null);
+select submit_payment('tokB','PayeeB',200,'U',current_date,'once','p',true,null,null);
+
+-- 1) Ф1: need_receipt по умолчанию false (передали null)
+select is(
+  (select need_receipt from payments where payee = 'PayeeA'),
+  false,
+  'submit_payment: need_receipt по умолчанию false'
+);
+
+-- 2) client_by_token возвращает имя своего клиента
+select is( client_by_token('tokA'), 'Client A', 'client_by_token отдаёт имя клиента' );
+
+-- 3) list_payments_by_token(A) видит ровно свои платежи
+select is(
+  (select count(*)::int from list_payments_by_token('tokA')),
+  1,
+  'list_payments_by_token(A): ровно свои платежи'
+);
+
+-- 4) и НЕ видит платежи B (изоляция)
+select is(
+  (select count(*)::int from list_payments_by_token('tokA') where payee = 'PayeeB'),
+  0,
+  'list_payments_by_token(A) не видит платежи B'
+);
+
+-- 5) неверный токен -> ничего
+select is(
+  (select count(*)::int from list_payments_by_token('nope')),
+  0,
+  'list_payments_by_token(неверный токен) -> пусто'
+);
+
+-- 6) Ф2: правка своей new-заявки успешна
+select lives_ok(
+  $$ select edit_payment_by_token('tokA',
+       (select id from payments where payee = 'PayeeA'),
+       'PayeeA2', 150, 'U', current_date, 'once', 'p', false, null, null) $$,
+  'edit_payment_by_token: правка своей new-заявки проходит'
+);
+
+-- 7) чужим токеном нельзя править платёж A
+select throws_ok(
+  $$ select edit_payment_by_token('tokB',
+       (select id from payments where payee = 'PayeeA2'),
+       'HACK', 1, null, current_date, 'once', null, false, null, null) $$,
+  'P0001',
+  'Заявку нельзя изменить: не найдена, не ваша или уже в работе',
+  'edit_payment_by_token: чужой токен не правит платёж'
+);
+
+-- 8) нельзя править не-new
+update payments set status = 'in_progress' where payee = 'PayeeA2';
+select throws_ok(
+  $$ select edit_payment_by_token('tokA',
+       (select id from payments where payee = 'PayeeA2'),
+       'X', 1, null, current_date, 'once', null, false, null, null) $$,
+  'P0001',
+  'Заявку нельзя изменить: не найдена, не ваша или уже в работе',
+  'edit_payment_by_token: не-new править нельзя'
+);
+
+-- 9) Фаза 2 RLS: у anon нет прямого SELECT на payments
+select ok(
+  not has_table_privilege('anon', 'public.payments', 'SELECT'),
+  'anon не имеет прямого SELECT на payments (revoke phase 2)'
+);
+
+select * from finish();
+rollback;

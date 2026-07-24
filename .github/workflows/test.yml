@@ -1,0 +1,26 @@
+name: DB tests
+
+# Прогоняет pgTAP-тесты бэкенда на чистом стеке Supabase.
+# Публичный репозиторий -> GitHub Actions бесплатны без лимита минут.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start local Supabase stack (applies migrations + seed)
+        run: supabase start
+
+      - name: Run pgTAP tests
+        run: supabase test db
