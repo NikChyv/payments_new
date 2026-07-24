@@ -1,0 +1,55 @@
+name: DB backup
+
+# Ежедневный бэкап прод-базы: pg_dump -> gzip -> шифрование GPG -> артефакт.
+# Бесплатно (публичный репо = безлимит Actions). Дамп ШИФРУЕТСЯ, потому что
+# артефакты публичного репо может скачать кто угодно — без пароля это мусор.
+#
+# ТРЕБУЕТ секретов репозитория (Settings -> Secrets and variables -> Actions):
+#   SUPABASE_DB_URL   — строка подключения прод-БД (Supabase -> Project Settings ->
+#                       Database -> Connection string -> Session pooler, URI с паролем)
+#   BACKUP_PASSPHRASE — надёжный пароль для шифрования (хранить отдельно и надёжно —
+#                       без него бэкап не расшифровать)
+#
+# ВОССТАНОВЛЕНИЕ (локально, с установленными gpg+psql):
+#   gpg --batch --passphrase "$BACKUP_PASSPHRASE" -d payments-YYYYMMDD-HHMMSS.sql.gz.gpg \
+#     | gunzip > restore.sql
+#   psql "$SUPABASE_DB_URL" -f restore.sql
+
+on:
+  schedule:
+    - cron: '0 2 * * *'    # ежедневно 02:00 UTC (05:00 Минск)
+  workflow_dispatch: {}     # ручной запуск (для проверки)
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install PostgreSQL 17 client
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+
+      - name: Dump, compress, encrypt
+        env:
+          SUPABASE_DB_URL:   ${{ secrets.SUPABASE_DB_URL }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          NAME="payments-$(date +%Y%m%d-%H%M%S).sql.gz.gpg"
+          pg_dump "$SUPABASE_DB_URL" --schema=public --no-owner \
+            | gzip \
+            | gpg --batch --yes --symmetric --cipher-algo AES256 \
+                  --passphrase "$BACKUP_PASSPHRASE" -o "$NAME"
+          ls -lh "$NAME"
+
+      - name: Upload encrypted backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup
+          path: "*.sql.gz.gpg"
+          retention-days: 30
