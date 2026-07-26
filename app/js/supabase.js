@@ -18,6 +18,7 @@ export function toRow(it) {
     created_at: it.created || todayStr(),
     client_id: it.client_id || null,
     auto_created: !!it.autoCreated,
+    created_by_staff: it.createdByStaff || null,
   };
 }
 
@@ -29,6 +30,7 @@ export function fromRow(r) {
     file: (r.file_url || r.file_name) ? {name: r.file_name || "файл", url: r.file_url || null} : null,
     created: r.created_at, client_id: r.client_id || null,
     autoCreated: !!r.auto_created,
+    createdByStaff: r.created_by_staff || null,
   };
 }
 
@@ -41,7 +43,11 @@ export async function load() {
       if (state.currentStaff && !state.currentStaff.is_admin) {
         const ids = {};
         state.clientsList.forEach(c => { ids[c.id] = 1; });
-        state.items = state.items.filter(it => it.client_id && ids[it.client_id]);
+        // свои клиенты + собственные личные задачи (у них нет client_id)
+        state.items = state.items.filter(it =>
+          (it.client_id && ids[it.client_id]) ||
+          (it.createdByStaff && it.createdByStaff === state.currentStaffId)
+        );
       }
     } catch(e) {
       console.error(e);

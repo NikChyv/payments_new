@@ -1,7 +1,7 @@
 import { sb } from './supabase.js';
 import { state } from './state.js';
 import { toast } from './utils.js';
-import { loadClients, loadStaffList, renderClients } from './clients.js';
+import { loadClients, loadStaffList, renderClients, fillStaffClientSelect } from './clients.js';
 
 export async function onLoggedIn() {
   const ures = await sb.auth.getUser();
@@ -16,20 +16,33 @@ export async function onLoggedIn() {
   }
 
   state.currentStaff = st.data;
+  state.currentStaffId = u.id;
   document.getElementById("staffName").textContent = state.currentStaff.name;
   document.getElementById("staffRole").textContent = state.currentStaff.is_admin ? "владелец" : "бухгалтер";
   document.getElementById("staffBox").classList.remove("hidden");
-  document.getElementById("tabForm").style.display = "none";
+
+  // сотрудник может завести заявку сам: для клиента или «для себя»
+  document.getElementById("tabForm").style.display = "";
+  document.getElementById("tabs").classList.remove("hidden");
+  const clientBox = document.getElementById("clientFieldBox");
+  const staffBoxSel = document.getElementById("staffClientBox");
+  if (clientBox && staffBoxSel) {
+    clientBox.style.display = "none";
+    staffBoxSel.style.display = "";
+    const ci = document.querySelector('input[name=client]');
+    if (ci) ci.required = false; // скрытое поле с required блокировало бы отправку
+  }
 
   await loadClients();
+  fillStaffClientSelect();
   if (state.currentStaff.is_admin) {
     await loadStaffList();
     renderClients();
     document.getElementById("tabClients").style.display = "";
     document.getElementById("tabs").classList.remove("hidden");
   } else {
+    // бухгалтеру вкладки нужны (очередь + новая заявка), кроме «Клиентов»
     document.getElementById("tabClients").style.display = "none";
-    document.getElementById("tabs").classList.add("hidden");
   }
   return true;
 }
@@ -52,6 +65,7 @@ export async function doLogin() {
 export async function doLogout() {
   await sb.auth.signOut();
   state.currentStaff = null;
+  state.currentStaffId = null;
   state.items = [];
   state.clientsList = [];
   state.staffList = [];

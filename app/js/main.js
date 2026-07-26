@@ -122,9 +122,18 @@ async function onSubmit(e) {
         fileObj,
       );
     } else {
-      // офлайн / сотрудник-форма
+      // сотрудник заводит заявку: для своего клиента или личную напоминалку
+      const sel = document.getElementById("ncFormClient");
+      const pickedId = sel && sel.value ? sel.value : null;
+      const picked = pickedId ? state.clientsList.find(c => c.id === pickedId) : null;
       const rec = {
-        id: genId(), client: f.client.value.trim(), payee: f.payee.value.trim(),
+        id: genId(),
+        client: picked ? picked.name
+                       : (state.currentStaff ? "Личное · " + state.currentStaff.name
+                                             : f.client.value.trim()),
+        client_id: picked ? picked.id : null,
+        createdByStaff: state.currentStaffId || null,
+        payee: f.payee.value.trim(),
         amount: parseFloat(f.amount.value) || 0, requisites: f.requisites.value.trim(),
         due: f.due.value, recurrence: f.recurrence.value, purpose: f.purpose.value.trim(),
         status: "new", needReceipt: f.needReceipt.checked, file: fileObj, created: todayStr(),

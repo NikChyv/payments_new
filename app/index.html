@@ -74,10 +74,17 @@
       <h2 id="formTitle">Поручение на оплату</h2>
       <p class="sub" id="formSub">Заполните поля — бухгалтер сразу увидит заявку в очереди со сроком. Так платёж не потеряется.</p>
 
-      <div class="fg">
+      <div class="fg" id="clientFieldBox">
         <label>Ваша компания (клиент) <span class="req">*</span></label>
         <input name="client" list="clientsDl" required placeholder="Например: ООО «Ромашка»">
         <datalist id="clientsDl"></datalist>
+      </div>
+
+      <!-- для сотрудника: выбрать клиента или завести личную напоминалку -->
+      <div class="fg" id="staffClientBox" style="display:none">
+        <label>Для кого платёж</label>
+        <select id="ncFormClient"></select>
+        <div class="hint">Личная задача видна только вам — клиент её не увидит.</div>
       </div>
 
       <div class="fg">

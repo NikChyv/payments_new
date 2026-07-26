@@ -18,6 +18,16 @@ export async function loadClients() {
   state.clientsList = res.error ? [] : (res.data || []);
 }
 
+// Список «для кого платёж» в форме сотрудника: свои клиенты + личная напоминалка.
+export function fillStaffClientSelect() {
+  const sel = document.getElementById("ncFormClient");
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">— Личная задача (без клиента) —</option>' +
+    state.clientsList.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
+  sel.value = cur;
+}
+
 export async function loadStaffList() {
   if (!useRemote) { state.staffList = []; return; }
   const res = await sb.from("staff").select("id,name,is_admin").order("name", {ascending: true});
@@ -73,6 +83,7 @@ export async function addClient() {
   document.getElementById("ncName").value = "";
   await loadClients();
   renderClients();
+  fillStaffClientSelect();  // новый клиент сразу доступен в форме заявки
   toast("Клиент добавлен");
 }
 
