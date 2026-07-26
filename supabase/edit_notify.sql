@@ -54,7 +54,7 @@ begin
       || '👤 Клиент: ' || coalesce(v_client.name, '—') || chr(10)
       || '💳 Кому: '   || coalesce(p_payee, '—') || chr(10)
       || '💰 Сумма: '  || to_char(coalesce(p_amount, 0), 'FM999999999.00') || ' Br' || chr(10)
-      || '📅 Срок: '   || coalesce(to_char(p_due, 'DD.MM.YYYY'), '—')
+      || '📅 Срок: '   || coalesce(to_char(v_due, 'DD.MM.YYYY'), '—')  -- фактически сохранённая дата
       || case when p_purpose is not null and p_purpose <> ''
               then chr(10) || '📝 ' || p_purpose else '' end;
 
