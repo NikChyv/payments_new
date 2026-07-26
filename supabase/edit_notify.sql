@@ -17,6 +17,7 @@ create or replace function public.edit_payment_by_token(
 ) returns boolean language plpgsql security definer set search_path = public, extensions as $$
 declare
   v_client   clients;
+  v_due      date;
   bot_token  text   := '<TELEGRAM_BOT_TOKEN>';
   chat_ids   text[] := array['670574684', '744619432'];  -- Никита, Валентина
   cid        text;
@@ -30,11 +31,13 @@ begin
     raise exception 'Неверный токен клиента';
   end if;
 
+  v_due := adjust_due_date(p_due);   -- рабочий график (миграция 009)
+
   update payments set
     payee        = p_payee,
     amount       = coalesce(p_amount, 0),
     requisites   = p_requisites,
-    due          = p_due,
+    due          = v_due,
     recurrence   = coalesce(p_recurrence, 'once'),
     purpose      = p_purpose,
     need_receipt = coalesce(p_need_receipt, false),

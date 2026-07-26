@@ -32,6 +32,14 @@ function isoLocal(d: Date) {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,"0")}-${String(d.getUTCDate()).padStart(2,"0")}`;
 }
 
+// Работаем пн–пт: платёж на будущие сб/вс не проводится (сегодняшний выходной
+// сервер сам перенесёт на ближайший рабочий день).
+function isWeekend(iso: string) {
+  const g = new Date(iso + "T00:00:00Z").getUTCDay();
+  return g === 0 || g === 6;
+}
+function isFuture(iso: string) { return iso > isoLocal(minskNow()); }
+
 function parseAmount(s: string): number | null {
   const n = parseFloat(s.replace(/\s/g, "").replace(",", "."));
   return (isFinite(n) && n > 0) ? n : null;
@@ -168,6 +176,10 @@ async function routeText(chatId: number, tgId: number, step: string, draft: Draf
     case "due": {
       const dt = parseDate(text);
       if (!dt) { await send(chatId, "Не понял дату. Формат ДД.ММ.ГГГГ, напр. 25.06.2026 — или кнопкой.", KB.due); return; }
+      if (isFuture(dt) && isWeekend(dt)) {
+        await send(chatId, "🚫 В выходной платёж не проводится. Укажите рабочий день (пн–пт).", KB.due);
+        return;
+      }
       draft.due = dt;
       await setSession(tgId, "recurrence", draft); await askRecurrence(chatId); break;
     }
@@ -200,7 +212,11 @@ async function submit(chatId: number, tgId: number, token: string, d: Draft) {
   await clearSession(tgId);
   if (error) {
     console.error(error);
-    await send(chatId, "Не удалось создать заявку. Попробуйте ещё раз: /new");
+    // показываем настоящую причину (выходной, лимит частоты и т.п.)
+    const why = (error as {message?: string}).message || "";
+    await send(chatId, why
+      ? `Не удалось создать заявку: ${why}\n\nПопробуйте ещё раз: /new`
+      : "Не удалось создать заявку. Попробуйте ещё раз: /new");
   } else {
     await send(chatId, `✅ Заявка отправлена бухгалтеру. Платёж «${d.payee}» на ${fmtDate(d.due as string)} в очереди.\n\nПосмотреть статус: /payments`);
   }
@@ -295,7 +311,15 @@ async function handleCallback(cq: any) {
   const d = session.draft;
 
   if (data.startsWith("due:") && session.step === "due") {
-    d.due = data === "due:today" ? isoLocal(minskNow()) : isoLocal((() => { const x = minskNow(); x.setUTCDate(x.getUTCDate()+1); return x; })());
+    const picked = data === "due:today"
+      ? isoLocal(minskNow())
+      : isoLocal((() => { const x = minskNow(); x.setUTCDate(x.getUTCDate()+1); return x; })());
+    // «Сегодня» в выходной сервер сам перенесёт; «Завтра» на сб/вс — не примет
+    if (isFuture(picked) && isWeekend(picked)) {
+      await send(chatId, "🚫 Завтра выходной — платёж не проводится. Укажите рабочий день (пн–пт) в формате ДД.ММ.ГГГГ.");
+      return;
+    }
+    d.due = picked;
     await setSession(tgId, "recurrence", d); await askRecurrence(chatId); return;
   }
   if (data.startsWith("rec:") && session.step === "recurrence") {

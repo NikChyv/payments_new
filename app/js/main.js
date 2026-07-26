@@ -84,9 +84,21 @@ function resetFormNew() {
 
 // ---------- отправка формы ----------
 
+// Работаем пн–пт: будущий платёж на сб/вс не проводится. Сегодняшний выходной
+// сервер сам перенесёт на ближайший рабочий день, поэтому его не блокируем.
+function weekendDueBlocked(dueStr) {
+  if (!dueStr || dueStr <= todayStr()) return false;
+  const g = new Date(dueStr + "T00:00:00Z").getUTCDay();
+  return g === 0 || g === 6;
+}
+
 async function onSubmit(e) {
   e.preventDefault();
   const f = e.target;
+  if (state.TOKEN && weekendDueBlocked(f.due.value)) {
+    toast("В выходной платёж не проводится — выберите рабочий день (пн–пт)");
+    return;
+  }
   const fileInput = document.getElementById("fileInput");
   const submitBtn = f.querySelector(".submit");
   const wasEditing = !!(state.TOKEN && state.editingId);
