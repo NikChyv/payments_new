@@ -46,9 +46,19 @@ export function renderClients() {
       `<div class="nm">${esc(c.name)}</div>` +
       `<div class="who">Бухгалтер: ${esc(staffNameById(c.staff_id))}</div>` +
       `<div class="cl-link"><code>${esc(link)}</code>` +
-      `<button data-copy="${esc(link)}">Скопировать ссылку</button></div>` +
+      `<button data-copy="${esc(link)}">Скопировать ссылку</button>` +
+      `<button class="ghost" data-rotate="${esc(c.id)}" title="Перевыпустить ссылку — старая перестанет работать">🔄 Перевыпустить</button></div>` +
       `</div>`;
   }).join("");
+}
+
+// Пункт 5: отзыв ссылки — генерируем новый токен, старый мгновенно мёртв.
+export async function rotateClientToken(id) {
+  const res = await sb.rpc("rotate_client_token", { p_id: id });
+  if (res.error) { toast("Ошибка: " + res.error.message); return; }
+  await loadClients();
+  renderClients();
+  toast("Ссылка перевыпущена — старая больше не работает");
 }
 
 export async function addClient() {

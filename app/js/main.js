@@ -3,7 +3,7 @@ import { state } from './state.js';
 import { todayStr, fmtDate } from './dates.js';
 import { esc, toast, genId } from './utils.js';
 import { onLoggedIn, doLogin, doLogout } from './auth.js';
-import { addClient, refreshClients } from './clients.js';
+import { addClient, refreshClients, rotateClientToken } from './clients.js';
 import { render, onListClick } from './queue.js';
 import {
   loadClientByToken, loadPaymentsByToken, submitPaymentByToken, editPaymentByToken, renderClient,
@@ -261,13 +261,20 @@ async function init() {
   document.getElementById("ncAdd").addEventListener("click", addClient);
 
   document.getElementById("clientsList").addEventListener("click", e => {
-    const b = e.target.closest && e.target.closest("button[data-copy]");
-    if (!b) return;
-    const link = b.getAttribute("data-copy");
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(link).then(() => toast("Ссылка скопирована"));
-    } else {
-      toast("Скопируйте ссылку вручную");
+    const copyBtn = e.target.closest && e.target.closest("button[data-copy]");
+    if (copyBtn) {
+      const link = copyBtn.getAttribute("data-copy");
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(link).then(() => toast("Ссылка скопирована"));
+      } else {
+        toast("Скопируйте ссылку вручную");
+      }
+      return;
+    }
+    const rotBtn = e.target.closest && e.target.closest("button[data-rotate]");
+    if (rotBtn) {
+      if (!confirm("Перевыпустить ссылку? Старая сразу перестанет работать — клиенту нужно отправить новую.")) return;
+      rotateClientToken(rotBtn.getAttribute("data-rotate"));
     }
   });
 
