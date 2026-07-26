@@ -3,7 +3,7 @@
 -- Запуск: supabase test db (локально и в CI). Транзакция откатывается.
 
 begin;
-select plan(9);
+select plan(10);
 
 -- ---- setup: два клиента с токенами (без бухгалтера) ----
 insert into clients (id, name, token, staff_id) values
@@ -19,6 +19,13 @@ select is(
   (select need_receipt from payments where payee = 'PayeeA'),
   false,
   'submit_payment: need_receipt по умолчанию false'
+);
+
+-- 1b) заявка от клиента НЕ помечена авто-созданной (иначе уведомление не уйдёт)
+select is(
+  (select auto_created from payments where payee = 'PayeeA'),
+  false,
+  'submit_payment: auto_created=false — уведомление о заявке клиента уходит'
 );
 
 -- 2) client_by_token возвращает имя своего клиента

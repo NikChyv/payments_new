@@ -17,6 +17,7 @@ export function toRow(it) {
     file_name: it.file ? it.file.name : null,
     created_at: it.created || todayStr(),
     client_id: it.client_id || null,
+    auto_created: !!it.autoCreated,
   };
 }
 
@@ -27,6 +28,7 @@ export function fromRow(r) {
     purpose: r.purpose || "", status: r.status, needReceipt: !!r.need_receipt,
     file: (r.file_url || r.file_name) ? {name: r.file_name || "файл", url: r.file_url || null} : null,
     created: r.created_at, client_id: r.client_id || null,
+    autoCreated: !!r.auto_created,
   };
 }
 

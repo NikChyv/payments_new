@@ -20,6 +20,10 @@ serve(async (req) => {
     const { record } = await req.json();
     if (!record) return new Response("no record", { status: 400 });
 
+    // следующая копия повторяющегося платежа создаётся системой после «Оплачено» —
+    // клиент такую заявку не подавал, уведомлять о ней не нужно
+    if (record.auto_created) return new Response("skip: auto-created");
+
     const lines = [
       `📋 <b>Новая заявка на оплату</b>`,
       ``,

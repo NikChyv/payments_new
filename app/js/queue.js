@@ -169,6 +169,7 @@ export function markPaid(it) {
     const nextDue = nextDueOf(it);
     const copy = JSON.parse(JSON.stringify(it));
     copy.id = genId(); copy.status = "new"; copy.due = nextDue; copy.file = null; copy.created = todayStr();
+    copy.autoCreated = true; // заявку не подавал клиент — уведомление не шлём
     state.items.push(copy);
     msg = "Оплачено. Создан следующий платёж на " + fmtDate(nextDue);
   }
