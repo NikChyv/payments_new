@@ -22,6 +22,9 @@ declare
   cid        text;
   msg        text;
 begin
+  -- лимит частоты (из миграции 006) — обязателен, иначе ручная вставка снимет защиту
+  perform check_rate_limit(p_token, 'edit', 20, interval '1 minute');
+
   select * into v_client from clients where token = p_token;
   if v_client.id is null then
     raise exception 'Неверный токен клиента';
