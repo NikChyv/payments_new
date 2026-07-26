@@ -40,7 +40,8 @@ begin
     need_receipt = coalesce(p_need_receipt, false),
     file_url     = coalesce(p_file_url, file_url),
     file_name    = coalesce(p_file_name, file_name)
-  where id = p_id and client_id = v_client.id and status = 'new';
+  where id = p_id and client_id = v_client.id and status = 'new'
+    and created_by_staff is null;   -- заявки бухгалтера клиент не правит (миграция 008)
   if not found then
     raise exception 'Заявку нельзя изменить: не найдена, не ваша или уже в работе';
   end if;
