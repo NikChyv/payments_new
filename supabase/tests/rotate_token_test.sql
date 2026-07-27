@@ -1,36 +1,61 @@
--- pgTAP: ротация токена клиента (пункт 5).
--- Проверяет: гейт админа, и что после смены токена старая ссылка мертва.
+-- pgTAP: отзыв/ротация ссылки клиента.
+-- Раньше ротация эмулировалась ручным UPDATE — сама функция не проверялась.
+-- Теперь вызываем rotate_client_token по-настоящему, подставляя JWT админа.
 
 begin;
-select plan(4);
+select plan(9);
 
-insert into clients (id, name, token, staff_id)
-  values ('dddddddd-dddd-dddd-dddd-dddddddddddd', 'RotCo', 'oldtok', null);
+-- админ и обычный бухгалтер
+insert into auth.users (id) values
+  ('000000ad-0000-0000-0000-0000000000ad'),
+  ('000000bb-0000-0000-0000-0000000000bb');
+insert into staff (id, name, is_admin) values
+  ('000000ad-0000-0000-0000-0000000000ad', 'Админ',    true),
+  ('000000bb-0000-0000-0000-0000000000bb', 'Бухгалтер', false);
+
+insert into clients (id, name, token, staff_id) values
+  ('dddddddd-dddd-dddd-dddd-dddddddddddd', 'RotCo',   'oldtok',   null),
+  ('d2d2d2d2-d2d2-d2d2-d2d2-d2d2d2d2d2d2', 'OtherCo', 'othertok', null);
 select submit_payment('oldtok','RP',100,'U',current_date,'once','p',false,null,null);
 
--- 1) без админа rotate_client_token падает (is_admin gate; в тесте нет JWT -> не админ)
+-- ---- 1) без авторизации ротация запрещена ----
 select throws_ok(
   $$ select rotate_client_token('dddddddd-dddd-dddd-dddd-dddddddddddd') $$,
   'P0001',
   'Только администратор может перевыпускать ссылки',
-  'rotate_client_token требует прав админа'
+  'без входа ротация запрещена'
 );
 
--- эмулируем саму ротацию (как сделал бы админ через RPC)
-update clients set token = 'newtok' where id = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+-- ---- 2) обычный бухгалтер тоже не может ----
+set local request.jwt.claims = '{"sub":"000000bb-0000-0000-0000-0000000000bb","role":"authenticated"}';
+select throws_ok(
+  $$ select rotate_client_token('dddddddd-dddd-dddd-dddd-dddddddddddd') $$,
+  'P0001',
+  'Только администратор может перевыпускать ссылки',
+  'бухгалтер без прав админа перевыпустить не может'
+);
 
--- 2) старый токен больше не резолвит клиента
-select is( client_by_token('oldtok'), null, 'старый токен мёртв после ротации' );
+-- ---- 3-8) админ: реальный вызов функции ----
+set local request.jwt.claims = '{"sub":"000000ad-0000-0000-0000-0000000000ad","role":"authenticated"}';
+select ok( is_admin(), 'is_admin() распознаёт админа по JWT' );
 
--- 3) новый токен работает
-select is( client_by_token('newtok'), 'RotCo', 'новый токен резолвится' );
+select rotate_client_token('dddddddd-dddd-dddd-dddd-dddddddddddd') as newtok \gset
 
--- 4) по старому токену платежи не отдаются
+-- ::text обязателен: у двух безтиповых литералов pgTAP не выводит полиморфный тип
+select isnt( :'newtok'::text, 'oldtok'::text, 'функция вернула НОВЫЙ токен' );
+select matches( :'newtok'::text, '^[0-9a-f]{32}$', 'новый токен — 32 hex-символа (128 бит)' );
 select is(
-  (select count(*)::int from list_payments_by_token('oldtok')),
-  0,
-  'старый токен не отдаёт платежи'
+  (select token from clients where id = 'dddddddd-dddd-dddd-dddd-dddddddddddd'),
+  :'newtok'::text,
+  'новый токен записан именно этому клиенту'
 );
+select is(
+  (select token from clients where id = 'd2d2d2d2-d2d2-d2d2-d2d2-d2d2d2d2d2d2'),
+  'othertok',
+  'токен другого клиента не затронут'
+);
+select is( client_by_token('oldtok'), null, 'старая ссылка мертва' );
+select is( client_by_token(:'newtok'), 'RotCo', 'новая ссылка работает' );
 
 select * from finish();
 rollback;
