@@ -3,7 +3,7 @@
 -- Теперь вызываем rotate_client_token по-настоящему, подставляя JWT админа.
 
 begin;
-select plan(9);
+select plan(11);
 
 -- админ и обычный бухгалтер
 insert into auth.users (id) values
@@ -13,9 +13,10 @@ insert into staff (id, name, is_admin) values
   ('000000ad-0000-0000-0000-0000000000ad', 'Админ',    true),
   ('000000bb-0000-0000-0000-0000000000bb', 'Бухгалтер', false);
 
-insert into clients (id, name, token, staff_id) values
-  ('dddddddd-dddd-dddd-dddd-dddddddddddd', 'RotCo',   'oldtok',   null),
-  ('d2d2d2d2-d2d2-d2d2-d2d2-d2d2d2d2d2d2', 'OtherCo', 'othertok', null);
+-- у RotCo привязан Telegram (как будто клиент нажал «Старт» по старой ссылке)
+insert into clients (id, name, token, staff_id, telegram_id) values
+  ('dddddddd-dddd-dddd-dddd-dddddddddddd', 'RotCo',   'oldtok',   null, 555000111),
+  ('d2d2d2d2-d2d2-d2d2-d2d2-d2d2d2d2d2d2', 'OtherCo', 'othertok', null, 555000222);
 select submit_payment('oldtok','RP',100,'U',current_date,'once','p',false,null,null);
 
 -- ---- 1) без авторизации ротация запрещена ----
@@ -56,6 +57,19 @@ select is(
 );
 select is( client_by_token('oldtok'), null, 'старая ссылка мертва' );
 select is( client_by_token(:'newtok'), 'RotCo', 'новая ссылка работает' );
+
+-- отзыв должен быть ПОЛНЫМ: бот ищет клиента по telegram_id, поэтому старая
+-- привязка обязана слетать — иначе доступ через бота переживает перевыпуск
+select is(
+  (select telegram_id from clients where id = 'dddddddd-dddd-dddd-dddd-dddddddddddd'),
+  null,
+  'привязка Telegram сброшена — доступ через бота отозван'
+);
+select is(
+  (select telegram_id from clients where id = 'd2d2d2d2-d2d2-d2d2-d2d2-d2d2d2d2d2d2'),
+  555000222::bigint,
+  'привязка другого клиента не затронута'
+);
 
 select * from finish();
 rollback;
