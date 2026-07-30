@@ -109,15 +109,44 @@ Workflow `.github/workflows/backup.yml` — ежедневно в 02:00 UTC:
 ## 5. Восстановление БД из бэкапа
 
 ```bash
-# 1. скачать артефакт из нужного запуска Actions
-# 2. расшифровать и распаковать
-gpg --batch --passphrase "$BACKUP_PASSPHRASE" -d payments-YYYYMMDD-HHMMSS.sql.gz.gpg \
-  | gunzip > restore.sql
+# 1. скачать артефакт из нужного запуска Actions, распаковать zip
+# 2. расшифровать (loopback обязателен для gpg 2.x)
+gpg --batch --pinentry-mode loopback --passphrase "$BACKUP_PASSPHRASE" \
+  -d payments-YYYYMMDD-HHMMSS.sql.gz.gpg | gunzip > restore.sql
 # 3. применить (сначала проверить на локальном стеке!)
 psql "$SUPABASE_DB_URL" -f restore.sql
 ```
-Дамп содержит схему `public` без владельцев. Проверять восстановление
-рекомендуется раз в квартал.
+
+### Что бэкап покрывает, а что нет
+
+Дамп — это схема `public` без владельцев. Проверено восстановлением: таблицы,
+данные, функции и RLS-политики встают полностью и работают.
+
+| Восстанавливается | Требует ручных действий |
+|---|---|
+| Клиенты и их **токены** (ссылки продолжат работать) | **Учётки входа сотрудников** (`auth.users`) |
+| Платежи, статусы, журнал изменений | Секреты Edge Functions |
+| Функции, RPC, RLS-политики | Database Webhooks |
+| Привязки Telegram у клиентов | Расписание `pg_cron` и токен в `send_daily_reminder` |
+
+⚠️ **Логины бухгалтеров в бэкап не входят** — схема `auth` управляется Supabase
+и не выгружается. При полном восстановлении сотрудников нужно завести заново
+(Auth → Add user → `insert into staff …`, см. §7), после чего связь
+`clients.staff_id` восстановится по существующим id только если использовать
+**те же UID**. Иначе переназначить бухгалтеров вручную во вкладке «Клиенты».
+
+> При восстановлении в чистую базу ожидаемы безобидные ошибки:
+> `schema "public" already exists`, `permission denied to change default privileges`
+> (системные роли Supabase) и `staff_id_fkey` — последняя как раз из-за
+> отсутствующих `auth.users`. На данные это не влияет.
+
+### Проверка восстановления (раз в квартал)
+Накатить дамп в **локальный** стек и сверить количество строк с продом:
+```bash
+supabase start
+docker exec -i supabase_db_payments psql -U postgres -d postgres < restore.sql
+```
+После проверки вернуть локальную базу: `supabase db reset`.
 
 ## 6. Инциденты
 
