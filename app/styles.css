@@ -45,6 +45,19 @@ main{padding:22px 0 60px}
 .row.b-red{border-left-color:var(--red)} .row.b-orange{border-left-color:var(--orange)}
 .row.b-amber{border-left-color:var(--amber)} .row.b-gray{border-left-color:var(--gray)}
 .row.b-green{border-left-color:var(--green)}
+/* Срочные (просрочено / сегодня) — заметно выделяем: толще полоса, фон, кайма */
+.row.b-red,.row.b-orange{border-left-width:8px}
+.row.b-red{background:#fff7f7;border-color:#fca5a5;border-left-color:var(--red)}
+.row.b-orange{background:#fffbf3;border-color:#fdba74;border-left-color:var(--orange)}
+.row.b-red .payee,.row.b-orange .payee{font-size:16.5px}
+.row.b-red .amount,.row.b-orange .amount{font-size:16.5px}
+/* подсказка про суженный список */
+.filter-hint{display:none}
+.filter-hint.show{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  background:#eef2ff;border:1px solid #c7d2fe;color:#3730a3;
+  border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13.5px}
+.linkbtn{background:none;border:none;padding:0;cursor:pointer;font:inherit;
+  color:var(--accent);font-weight:600;text-decoration:underline}
 .row .main{flex:1;min-width:0}
 .row .head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .payee{font-weight:700;font-size:15.5px}
@@ -100,7 +113,8 @@ main{padding:22px 0 60px}
 /* ===== клиентский режим: «Мои платежи» ===== */
 .client-only{display:none}
 body.client-mode .client-only{display:block}
-body.client-mode .cards,body.client-mode .toolbar,body.client-mode #banner{display:none!important}
+body.client-mode .cards,body.client-mode .toolbar,body.client-mode #banner,
+body.client-mode .filter-hint{display:none!important}
 .mylist-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px}
 .mylist-top h2{margin:0;font-size:18px}
 .mylist-top .who{color:var(--muted);font-size:13px}

@@ -48,8 +48,23 @@ export function computeCounts() {
   }
 }
 
+// Подсказка, что список сужен: иначе непонятно, куда делись остальные платежи.
+function renderFilterHint() {
+  const el = document.getElementById("filterHint");
+  if (!el) return;
+  if (state.quickFilter === "due") {
+    el.className = "filter-hint show";
+    el.innerHTML = '⚡ Показано только то, что <b>нужно сделать сейчас</b> — просроченные и на сегодня. ' +
+                   '<button class="linkbtn" id="showAllBtn">Показать все платежи</button>';
+  } else {
+    el.className = "filter-hint";
+    el.innerHTML = "";
+  }
+}
+
 export function render() {
   computeCounts();
+  renderFilterHint();
   const list = document.getElementById("list");
   const q  = (document.getElementById("search").value || "").toLowerCase().trim();
   const fc = document.getElementById("fClient").value;
@@ -62,6 +77,8 @@ export function render() {
     else if (fs !== "all") { if (it.status !== fs) return false; }
     if (state.quickFilter) {
       const d = daysBetween(it.due);
+      // "due" — всё, что уже пора делать: просроченные + сегодняшние
+      if (state.quickFilter === "due"       && !(activeOpen(it) && d <= 0))    return false;
       if (state.quickFilter === "overdue"   && !(activeOpen(it) && d < 0))    return false;
       if (state.quickFilter === "today"     && !(activeOpen(it) && d === 0))   return false;
       if (state.quickFilter === "week"      && !(activeOpen(it) && d > 0 && d <= 7)) return false;
@@ -82,7 +99,9 @@ export function render() {
   });
 
   if (rows.length === 0) {
-    list.innerHTML = '<div class="empty">Нет платежей по выбранному фильтру 🎉</div>';
+    list.innerHTML = state.quickFilter === "due"
+      ? '<div class="empty">На сегодня всё закрыто, просроченных нет 🎉<br><span style="font-size:13px">Будущие платежи — кнопка «Показать все платежи» выше.</span></div>'
+      : '<div class="empty">Нет платежей по выбранному фильтру 🎉</div>';
     return;
   }
   list.innerHTML = rows.map(rowHtml).join("");

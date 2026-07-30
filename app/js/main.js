@@ -235,12 +235,32 @@ async function init() {
   document.getElementById("fClient").addEventListener("change", render);
   document.getElementById("fStatus").addEventListener("change", render);
 
+  // подсветка карточек под текущий быстрый фильтр («due» = две карточки сразу)
+  function syncCards() {
+    document.querySelectorAll(".scard").forEach(c => {
+      const f = c.getAttribute("data-filter");
+      const on = state.quickFilter === "due"
+        ? (f === "overdue" || f === "today")
+        : state.quickFilter === f;
+      c.classList.toggle("sel", on);
+    });
+  }
+  syncCards();
+
+  // «Показать все платежи» в подсказке
+  document.getElementById("filterHint").addEventListener("click", e => {
+    if (!e.target.closest("#showAllBtn")) return;
+    state.quickFilter = "";
+    syncCards();
+    render();
+  });
+
   document.getElementById("clearFilter").addEventListener("click", () => {
     state.quickFilter = "";
     document.getElementById("search").value = "";
     document.getElementById("fClient").value = "";
     document.getElementById("fStatus").value = "active";
-    document.querySelectorAll(".scard").forEach(c => c.classList.remove("sel"));
+    syncCards();
     render();
   });
 
@@ -248,9 +268,8 @@ async function init() {
     card.addEventListener("click", () => {
       const f = card.getAttribute("data-filter");
       const on = state.quickFilter !== f;
-      document.querySelectorAll(".scard").forEach(c => c.classList.remove("sel"));
       state.quickFilter = on ? f : "";
-      if (on) card.classList.add("sel");
+      syncCards();
       document.getElementById("fStatus").value = (on && f === "await_doc") ? "all" : "active";
       render();
     });
