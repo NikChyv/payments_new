@@ -1,0 +1,124 @@
+name: Health check
+
+# Сторожит тихие отказы: приложение открывается, база жива, функция бота
+# задеплоена, Telegram-webhook без ошибок.
+#
+# Работает БЕЗ секретов: при проблеме падает, и GitHub присылает письмо.
+# Если добавить TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID в секреты репозитория —
+# алерт придёт ещё и в Telegram, плюс подключится проверка webhook.
+#
+# Чтобы не спамить: сообщение уходит только при СМЕНЕ состояния
+# (было хорошо -> сломалось, и обратно), а не на каждый запуск.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  APP_URL:  https://nikchyv.github.io/payments_new/app/
+  SB_REST:  https://gmvhphuabiyggfurfhmc.supabase.co/rest/v1/
+  SB_BOTFN: https://gmvhphuabiyggfurfhmc.supabase.co/functions/v1/telegram-bot
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Проверки
+        id: probe
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          set -uo pipefail
+          PROBLEMS=""
+          code() { curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$1" || echo "000"; }
+
+          # 1) сайт приложения
+          C=$(code "$APP_URL")
+          if [ "$C" != "200" ]; then
+            PROBLEMS="${PROBLEMS}• Сайт приложения не открывается (HTTP $C)"$'\n'
+          fi
+
+          # 2) база: 401 = API жив и требует ключ. Другой ответ = проблема
+          #    (проект уснул/лежит — будет 5xx или таймаут)
+          C=$(code "$SB_REST")
+          if [ "$C" != "401" ]; then
+            PROBLEMS="${PROBLEMS}• Supabase недоступен (HTTP $C)"$'\n'
+          fi
+
+          # 3) функция бота: 403 = задеплоена и проверяет секретный заголовок
+          C=$(code "$SB_BOTFN")
+          if [ "$C" != "403" ]; then
+            PROBLEMS="${PROBLEMS}• Функция telegram-bot отвечает неверно (HTTP $C, ждали 403)"$'\n'
+          fi
+
+          # 4) webhook Telegram — только если известен токен бота
+          if [ -n "${TG_TOKEN:-}" ]; then
+            INFO=$(curl -sS --max-time 20 "https://api.telegram.org/bot${TG_TOKEN}/getWebhookInfo" || echo '{}')
+            URL=$(echo "$INFO"  | jq -r '.result.url // ""')
+            ERR=$(echo "$INFO"  | jq -r '.result.last_error_message // ""')
+            PEND=$(echo "$INFO" | jq -r '.result.pending_update_count // 0')
+            if [ -z "$URL" ]; then
+              PROBLEMS="${PROBLEMS}• Telegram webhook не настроен — бот не получает сообщения"$'\n'
+            fi
+            if [ -n "$ERR" ]; then
+              PROBLEMS="${PROBLEMS}• Telegram не может достучаться до бота: ${ERR}"$'\n'
+            fi
+            if [ "$PEND" -ge 50 ]; then
+              PROBLEMS="${PROBLEMS}• В очереди бота застряло ${PEND} сообщений"$'\n'
+            fi
+          fi
+
+          if [ -n "$PROBLEMS" ]; then
+            echo "status=fail" >> "$GITHUB_OUTPUT"
+            echo "Найдены проблемы:"; printf '%s' "$PROBLEMS"
+          else
+            echo "status=ok" >> "$GITHUB_OUTPUT"
+            echo "Все проверки пройдены."
+          fi
+          { echo "problems<<___EOF___"; printf '%s' "$PROBLEMS"; echo "___EOF___"; } >> "$GITHUB_OUTPUT"
+
+      - name: Уведомить при смене состояния
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHATS: ${{ secrets.TELEGRAM_CHAT_ID }}
+          STATUS:   ${{ steps.probe.outputs.status }}
+          PROBLEMS: ${{ steps.probe.outputs.problems }}
+        run: |
+          set -uo pipefail
+          # состояние прошлого запуска: шлём только на переходах, без спама
+          PREV=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/health.yml/runs?per_page=1&status=completed" \
+                   --jq '.workflow_runs[0].conclusion // "none"' 2>/dev/null || echo "none")
+          echo "Сейчас: $STATUS, прошлый запуск: $PREV"
+
+          MSG=""
+          if [ "$STATUS" = "fail" ] && [ "$PREV" != "failure" ]; then
+            MSG="🔴 Платежи: проблема"$'\n\n'"${PROBLEMS}"$'\n'"Проверка: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          elif [ "$STATUS" = "ok" ] && [ "$PREV" = "failure" ]; then
+            MSG="🟢 Платежи: всё восстановилось, сервис работает."
+          fi
+
+          if [ -n "$MSG" ] && [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHATS:-}" ]; then
+            IFS=',' read -ra CHATS <<< "$TG_CHATS"
+            for CID in "${CHATS[@]}"; do
+              CID=$(echo "$CID" | tr -d ' ')
+              [ -z "$CID" ] && continue
+              BODY=$(jq -n --arg chat "$CID" --arg text "$MSG" \
+                       '{chat_id:$chat, text:$text, disable_web_page_preview:true}')
+              curl -sS -X POST -H 'Content-Type: application/json' -d "$BODY" \
+                   "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" -o /dev/null
+            done
+            echo "Уведомление отправлено."
+          elif [ -n "$MSG" ]; then
+            echo "Секреты Telegram не заданы — алерт только через письмо GitHub."
+          else
+            echo "Состояние не менялось — молчим."
+          fi
+
+          # красный статус, чтобы GitHub прислал письмо и это было видно в Actions
+          [ "$STATUS" = "ok" ]
