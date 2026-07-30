@@ -33,6 +33,9 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update
           sudo apt-get install -y postgresql-client-17
+          # на раннере предустановлен клиент 16 и перехватывает вызов —
+          # ставим 17-й первым в PATH, иначе pg_dump ругается на версию сервера
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
 
       - name: Dump, compress, encrypt
         env:
@@ -40,6 +43,7 @@ jobs:
           BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
         run: |
           set -euo pipefail
+          pg_dump --version    # должно быть 17.x — сервер не примет клиент старее
           NAME="payments-$(date +%Y%m%d-%H%M%S).sql.gz.gpg"
           pg_dump "$SUPABASE_DB_URL" --schema=public --no-owner \
             | gzip \
