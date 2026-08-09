@@ -164,3 +164,14 @@ body.client-mode .fg:first-of-type label{font-size:14px}
 .cl-link code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:#f1f5f9;border-radius:8px;padding:8px 10px;font-size:12.5px;color:#334155}
 .cl-link button{background:#fff;border:1px solid var(--line);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:13px;color:var(--accent);font-weight:600;white-space:nowrap}
 .cl-link button:hover{border-color:var(--accent)}
+.cl-tools{display:flex;gap:8px;align-items:center;margin-top:8px}
+.cl-tools button{background:#fff;border:1px solid var(--line);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap}
+.cl-exp{color:var(--green)}
+.cl-exp:hover{border-color:var(--green)}
+.cl-del{margin-left:auto;color:var(--red)}
+.cl-del:hover{border-color:var(--red);background:var(--red-bg)}
+.cl-period{display:flex;gap:8px;align-items:center;margin-top:10px;padding:10px 12px;background:#f8fafc;border:1px solid var(--line);border-radius:10px;font-size:13px;color:var(--muted);flex-wrap:wrap}
+.cl-period input{border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:13px;color:var(--ink);background:#fff}
+.cl-period button{background:var(--accent);color:#fff;border:none;border-radius:9px;padding:8px 16px;font-weight:700;font-size:13px;cursor:pointer}
+.cl-period button:hover{background:var(--accent-d)}
+.cl-period[hidden]{display:none}

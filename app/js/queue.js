@@ -3,8 +3,9 @@ import { daysBetween, addDays, addMonths, fmtDate, fmtMoney, todayStr } from './
 import { save, removeRemote } from './supabase.js';
 import { esc, toast, setText, genId } from './utils.js';
 
-const recLbl = {once:"Разовый", weekly:"Еженедельно", monthly:"Ежемесячно"};
-const stLbl  = {new:"Новая", in_progress:"В работе", paid:"Оплачено", sent:"Документ отправлен"};
+// экспортируются: те же подписи идут в выгрузку Excel (export.js)
+export const recLbl = {once:"Разовый", weekly:"Еженедельно", monthly:"Ежемесячно"};
+export const stLbl  = {new:"Новая", in_progress:"В работе", paid:"Оплачено", sent:"Документ отправлен"};
 const stCls  = {new:"b-st-new", in_progress:"b-st-prog", paid:"b-st-paid", sent:"b-st-sent"};
 
 export function activeOpen(it) {

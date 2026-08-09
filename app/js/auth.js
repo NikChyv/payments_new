@@ -34,15 +34,20 @@ export async function onLoggedIn() {
   }
 
   await loadClients();
+  await loadStaffList();   // бухгалтеру RLS вернёт только его собственную строку
   fillStaffClientSelect();
-  if (state.currentStaff.is_admin) {
-    await loadStaffList();
-    renderClients();
-    document.getElementById("tabClients").style.display = "";
-    document.getElementById("tabs").classList.remove("hidden");
-  } else {
-    // бухгалтеру вкладки нужны (очередь + новая заявка), кроме «Клиентов»
-    document.getElementById("tabClients").style.display = "none";
+  renderClients();
+
+  // Экран «Клиенты» открыт и бухгалтеру: там живёт выгрузка платежей в Excel,
+  // а видит он по-прежнему только своих клиентов (RLS clients_read).
+  // Заводить и удалять клиентов может по-прежнему только админ.
+  document.getElementById("tabClients").style.display = "";
+  document.getElementById("tabs").classList.remove("hidden");
+  const addBox = document.getElementById("clientsAdd");
+  if (addBox) addBox.style.display = state.currentStaff.is_admin ? "" : "none";
+  const clHint = document.getElementById("clientsHint");
+  if (clHint && !state.currentStaff.is_admin) {
+    clHint.textContent = "Ваши клиенты. Выгрузите график платежей в Excel, чтобы отправить клиенту.";
   }
   return true;
 }

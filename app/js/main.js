@@ -3,7 +3,8 @@ import { state } from './state.js';
 import { todayStr, fmtDate } from './dates.js';
 import { esc, toast, genId } from './utils.js';
 import { onLoggedIn, doLogin, doLogout } from './auth.js';
-import { addClient, refreshClients, rotateClientToken } from './clients.js';
+import { addClient, refreshClients, rotateClientToken, deleteClientById, renderClients } from './clients.js';
+import { exportClientPayments } from './export.js';
 import { render, onListClick } from './queue.js';
 import {
   loadClientByToken, loadPaymentsByToken, submitPaymentByToken, editPaymentByToken, renderClient,
@@ -21,6 +22,9 @@ function switchView(v) {
   const tc = document.getElementById("tabClients");
   if (tc) tc.classList.toggle("active", v === "clients");
   if (v === "queue") { state.TOKEN ? renderClient() : render(); }
+  // счётчик заявок в карточках считается по загруженной очереди — при входе
+  // на экран она уже загружена, поэтому перерисовываем здесь, а не при логине
+  if (v === "clients" && !state.TOKEN && state.currentStaff) renderClients();
 }
 
 // ---------- поллинг ----------
@@ -315,6 +319,32 @@ async function init() {
     if (rotBtn) {
       if (!confirm("Перевыпустить ссылку? Старая сразу перестанет работать — клиенту нужно отправить новую.")) return;
       rotateClientToken(rotBtn.getAttribute("data-rotate"));
+      return;
+    }
+
+    // «Выгрузить в Excel» — раскрывает выбор периода под карточкой
+    const expBtn = e.target.closest && e.target.closest("button[data-export]");
+    if (expBtn) {
+      const box = document.getElementById("per-" + expBtn.getAttribute("data-export"));
+      if (box) box.hidden = !box.hidden;
+      return;
+    }
+
+    const goBtn = e.target.closest && e.target.closest("button[data-expgo]");
+    if (goBtn) {
+      const id = goBtn.getAttribute("data-expgo");
+      const from = document.querySelector(`input[data-from="${id}"]`);
+      const to   = document.querySelector(`input[data-to="${id}"]`);
+      exportClientPayments(id, from ? from.value : "", to ? to.value : "");
+      return;
+    }
+
+    const delBtn = e.target.closest && e.target.closest("button[data-del]");
+    if (delBtn) {
+      const id = delBtn.getAttribute("data-del");
+      const cl = state.clientsList.find(c => c.id === id);
+      if (!confirm(`Удалить клиента «${cl ? cl.name : ""}»? Его ссылка перестанет работать.\n\nЕсли у клиента есть заявки, удаления не произойдёт.`)) return;
+      deleteClientById(id);
     }
   });
 

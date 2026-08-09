@@ -23,15 +23,24 @@ $env:Path = "$env:USERPROFILE\scoop\shims;$env:Path"     # supabase
 cd c:\Payment-automation-system\payments
 supabase start        # поднять локальный стек
 supabase db reset     # пересобрать БД с нуля: миграции + seed
-supabase test db      # прогнать тесты (ожидается 24 PASS)
+supabase test db      # прогнать тесты (ожидается 105 PASS)
 supabase stop         # остановить (данные сохраняются в docker volume)
 ```
 
-Локальные адреса: Studio `http://127.0.0.1:48323`, API `http://127.0.0.1:48321`,
-БД `postgresql://postgres:postgres@127.0.0.1:48322/postgres`.
+Локальные адреса: Studio `http://127.0.0.1:18323`, API `http://127.0.0.1:18321`,
+БД `postgresql://postgres:postgres@127.0.0.1:18322/postgres`.
 
-> Порты сдвинуты с дефолтных `543xx` на `483xx`: на Windows WinNAT резервирует
-> диапазон 54262–54361, из-за чего стек не стартовал.
+> Порты сдвинуты с дефолтных `543xx`: Windows раздаёт динамические порты по
+> всему диапазону, и Hyper-V периодически резервирует новый кусок — стек
+> перестаёт стартовать с «ports are not available». Лечится переносом портов:
+> ```powershell
+> netsh interface ipv4 show excludedportrange protocol=tcp   # что занято
+> ```
+> затем поменять порты в `supabase/config.toml` на свободные и `supabase start`.
+
+Фронт для локальной проверки достаточно раздать любым статическим сервером и
+открыть `http://localhost:8080/app/` — `app/js/config.js` сам переключается на
+локальный стек по имени хоста, править его не нужно.
 
 **Изменение схемы:** новый файл в `supabase/migrations/` с именем
 `ГГГГММДДЧЧММСС_описание.sql` → `supabase db reset` → `supabase test db`.
@@ -201,6 +210,8 @@ https://api.telegram.org/bot<ТОКЕН>/setWebhook?url=https://gmvhphuabiyggfur
 | Что | Как |
 |-----|-----|
 | **Завести клиента** | экран «Клиенты» → имя + бухгалтер → «Добавить» → скопировать ссылку |
+| **Удалить клиента** | экран «Клиенты» → «🗑 Удалить» (только админ). Сработает, **только если заявок 0** — число видно в карточке. С заявками система откажет: удаление осиротило бы платежи |
+| **Выгрузить платежи в Excel** | экран «Клиенты» → «📊 Выгрузить в Excel» → период (по умолчанию текущий месяц) → «Скачать». Доступно бухгалтеру и админу; бухгалтер видит только своих клиентов |
 | **Ссылка для бота** | `https://t.me/paymentITNIMAX_bot?start=<токен>` (токен = часть после `?t=`) |
 | **Завести сотрудника** | Supabase → Auth → Add user → скопировать UID → `insert into staff (id, name, is_admin) values ('UID','Имя',false) on conflict (id) do nothing;` |
 | **Добавить получателя уведомлений** | его chat_id (`/myid` в боте) → в секрет `TELEGRAM_CHAT_ID` (через запятую) **и** в массив `chat_ids` в `send_daily_reminder` |

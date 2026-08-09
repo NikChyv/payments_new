@@ -151,17 +151,19 @@
     </div>
   </section>
 
-  <!-- ===== КЛИЕНТЫ (только админ) ===== -->
+  <!-- ===== КЛИЕНТЫ (админ — целиком; бухгалтер — только свои, ради выгрузки) ===== -->
   <section id="view-clients" class="hidden">
     <div class="clients-add">
       <h2 style="margin:0 0 4px;font-size:19px">Клиенты</h2>
-      <p style="margin:0 0 16px;color:var(--muted);font-size:13.5px">Заведите клиента, закрепите бухгалтера — и получите персональную ссылку для заявок.</p>
-      <div class="ca-row">
-        <input id="ncName" placeholder="Название компании, напр. ООО «Ромашка»">
-        <select id="ncStaff"></select>
-        <button id="ncAdd">Добавить</button>
+      <p id="clientsHint" style="margin:0 0 16px;color:var(--muted);font-size:13.5px">Заведите клиента, закрепите бухгалтера — и получите персональную ссылку для заявок.</p>
+      <div id="clientsAdd">
+        <div class="ca-row">
+          <input id="ncName" placeholder="Название компании, напр. ООО «Ромашка»">
+          <select id="ncStaff"></select>
+          <button id="ncAdd">Добавить</button>
+        </div>
+        <div class="login-err" id="ncErr"></div>
       </div>
-      <div class="login-err" id="ncErr"></div>
     </div>
     <div id="clientsList"></div>
   </section>

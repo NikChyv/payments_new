@@ -1,6 +1,7 @@
 import { sb, useRemote } from './supabase.js';
 import { state } from './state.js';
 import { esc, toast } from './utils.js';
+import { monthRange } from './export.js';
 
 export function baseLink(token) {
   return location.origin + location.pathname + "?t=" + encodeURIComponent(token);
@@ -50,16 +51,48 @@ export function renderClients() {
     box.innerHTML = '<div class="empty">Пока нет клиентов. Добавьте первого выше.</div>';
     return;
   }
+  const isAdmin = !!(state.currentStaff && state.currentStaff.is_admin);
+  const per = monthRange();
+
   box.innerHTML = state.clientsList.map(c => {
     const link = baseLink(c.token);
+    const cnt = state.items.filter(it => it.client_id === c.id).length;
+    // админу видно, у кого заявок нет, — такого клиента можно удалить
+    const delBtn = isAdmin
+      ? `<button class="cl-del" data-del="${esc(c.id)}"` +
+        (cnt ? ` title="У клиента ${cnt} — удалить нельзя"` : ` title="Удалить клиента"`) +
+        `>🗑 Удалить</button>`
+      : "";
+
     return `<div class="cl-card">` +
       `<div class="nm">${esc(c.name)}</div>` +
-      `<div class="who">Бухгалтер: ${esc(staffNameById(c.staff_id))}</div>` +
+      `<div class="who">Бухгалтер: ${esc(staffNameById(c.staff_id))} · заявок: ${cnt}</div>` +
       `<div class="cl-link"><code>${esc(link)}</code>` +
       `<button data-copy="${esc(link)}">Скопировать ссылку</button>` +
       `<button class="ghost" data-rotate="${esc(c.id)}" title="Перевыпустить ссылку — старая перестанет работать">🔄 Перевыпустить</button></div>` +
+      `<div class="cl-tools">` +
+        `<button class="cl-exp" data-export="${esc(c.id)}">📊 Выгрузить в Excel</button>` +
+        delBtn +
+      `</div>` +
+      `<div class="cl-period" id="per-${esc(c.id)}" hidden>` +
+        `<span>с</span><input type="date" data-from="${esc(c.id)}" value="${per.from}">` +
+        `<span>по</span><input type="date" data-to="${esc(c.id)}" value="${per.to}">` +
+        `<button data-expgo="${esc(c.id)}">Скачать</button>` +
+      `</div>` +
       `</div>`;
   }).join("");
+}
+
+// Удаление клиента — только админ и только если заявок нет.
+// Обе проверки живут в функции delete_client в базе: в браузере их можно обойти,
+// а «удалить клиента с заявками» = осиротить платежи (FK стоит ON DELETE SET NULL).
+export async function deleteClientById(id) {
+  const res = await sb.rpc("delete_client", { p_id: id });
+  if (res.error) { toast(res.error.message); return; }
+  await loadClients();
+  renderClients();
+  fillStaffClientSelect();
+  toast("Клиент удалён");
 }
 
 // Пункт 5: отзыв ссылки — генерируем новый токен, старый мгновенно мёртв.
