@@ -195,9 +195,28 @@ https://api.telegram.org/bot<ТОКЕН>/setWebhook?url=https://gmvhphuabiyggfur
 ### 6.6 Не приходят уведомления
 - **О новой заявке** — проверить Database Webhook на INSERT `payments` и логи
   `notify-payment`.
-- **Клиенту об оплате** — клиент должен быть привязан (`clients.telegram_id`);
-  повторное уведомление не придёт по флагам `client_paid_notified` /
+- **Клиенту об оплате** — первым делом проверить привязку:
+  ```sql
+  select name, telegram_id from clients where name ilike '%часть названия%';
+  ```
+  `telegram_id is null` — клиент не привязан, уведомления физически некуда слать.
+  Лечится тем, что клиент открывает ссылку на бота и жмёт «Старт».
+
+  Понять, доходили ли уведомления раньше, можно по флагам: они ставятся
+  **только после того, как Telegram принял сообщение**, поэтому это надёжный
+  журнал доставки.
+  ```sql
+  select p.due, p.payee, p.status, p.client_paid_notified
+  from payments p join clients c on c.id = p.client_id
+  where c.name ilike '%…%' order by p.created_at desc limit 20;
+  ```
+  Момент, где `true` сменяется на `false`, — дата, когда привязка отвалилась.
+
+  Повторное уведомление не придёт по флагам `client_paid_notified` /
   `client_sent_notified` — это by design.
+
+  ⚠️ **Перевыпуск ссылки отвязывает и бота.** После «🔄 Перевыпустить» клиенту
+  нужно отправить и новую ссылку на бота, иначе уведомления молча прекратятся.
 - **Утренний список** — проверить `cron.job` и что в `send_daily_reminder`
   реальный токен, а не плейсхолдер.
 

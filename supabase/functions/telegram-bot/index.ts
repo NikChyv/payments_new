@@ -255,12 +255,29 @@ async function handleMessage(msg: any) {
   if (text.startsWith("/start")) {
     const token = text.split(/\s+/)[1];
     if (!token) { await send(chatId, "Привет! Откройте персональную ссылку от бухгалтера и нажмите «Старт»."); return; }
-    // снимаем привязку этого Telegram со всех клиентов, иначе один telegram_id
+
+    // Порядок здесь принципиален. Раньше привязка сначала снималась, и только
+    // потом искался клиент по токену — если токен оказывался недействительным
+    // (например, открыта старая ссылка после перевыпуска), человек оставался
+    // вообще без привязки и молча переставал получать уведомления. Так у одного
+    // клиента уведомления пропали почти на месяц, и заметил это только он сам.
+    // Поэтому: сперва убеждаемся, что токен живой, и лишь затем трогаем привязки.
+    const { data: target, error: findErr } = await sb
+      .from("clients").select("id,name").eq("token", token).maybeSingle();
+
+    if (findErr || !target) {
+      await send(chatId, "Ссылка недействительна. Обратитесь к бухгалтеру.\n\nПрежняя привязка сохранена — уведомления продолжат приходить.");
+      return;
+    }
+
+    // снимаем привязку этого Telegram с других клиентов, иначе один telegram_id
     // может оказаться у нескольких клиентов и поиск перестаёт работать
     await sb.from("clients").update({ telegram_id: null }).eq("telegram_id", chatId);
-    const { data, error } = await sb.from("clients").update({ telegram_id: chatId }).eq("token", token).select("name").maybeSingle();
-    if (error || !data) await send(chatId, "Ссылка недействительна. Обратитесь к бухгалтеру.");
-    else await send(chatId, `Готово! Аккаунт «${data.name}» привязан.\n\n${HELP}`);
+    const { error: bindErr } = await sb
+      .from("clients").update({ telegram_id: chatId }).eq("id", target.id);
+
+    if (bindErr) await send(chatId, "Не удалось привязать аккаунт. Попробуйте ещё раз или напишите бухгалтеру.");
+    else await send(chatId, `Готово! Аккаунт «${target.name}» привязан.\n\n${HELP}`);
     return;
   }
   if (text === "/help") { await send(chatId, HELP); return; }

@@ -317,7 +317,7 @@ async function init() {
     }
     const rotBtn = e.target.closest && e.target.closest("button[data-rotate]");
     if (rotBtn) {
-      if (!confirm("Перевыпустить ссылку? Старая сразу перестанет работать — клиенту нужно отправить новую.")) return;
+      if (!confirm("Перевыпустить ссылку?\n\nСтарая сразу перестанет работать. У клиента отвалится и Telegram-бот: уведомления об оплате перестанут приходить, пока он не откроет НОВУЮ ссылку на бота и не нажмёт «Старт».\n\nНе забудьте отправить ему обе новые ссылки.")) return;
       rotateClientToken(rotBtn.getAttribute("data-rotate"));
       return;
     }
