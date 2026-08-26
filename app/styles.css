@@ -82,6 +82,13 @@ main{padding:22px 0 60px}
 .btn.ok{background:var(--green);color:#fff}
 .btn.soft{background:#f1f5f9;color:#334155}
 .btn.del{background:#fff;color:var(--red);border:1px solid #f0c9c9;font-size:12.5px;padding:7px}
+/* второстепенные действия: узкая строка иконок под кнопками статуса */
+.acts-more{display:flex;gap:6px;justify-content:flex-end;margin-top:2px}
+.btn.mini{flex:none;background:#f8fafc;border:1px solid var(--line);border-radius:9px;
+  padding:6px 10px;font-size:14px;line-height:1;color:var(--muted)}
+.btn.mini:hover{background:#eef2f7;border-color:var(--line-strong,#cbd4e0)}
+.btn.mini.danger:hover{background:var(--red-bg);border-color:#f0c9c9}
+.btn.mini:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .empty{text-align:center;color:var(--muted);padding:50px 0}
 /* form */
 .form{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:24px;max-width:640px;margin:0 auto}
@@ -108,6 +115,9 @@ main{padding:22px 0 60px}
   .cards{grid-template-columns:repeat(2,1fr)}
   .row{flex-direction:column} .acts{flex-direction:row;flex-wrap:wrap;min-width:0;width:100%}
   .acts .btn{flex:1} .two{grid-template-columns:1fr}
+  /* на телефоне строка иконок занимает всю ширину и не растягивает кнопки */
+  .acts-more{width:100%;justify-content:flex-start}
+  .acts-more .btn.mini{flex:0 0 auto;padding:8px 14px}
   .tabs{width:100%;margin:10px 0 0} .tab{flex:1}
 }
 /* ===== клиентский режим: «Мои платежи» ===== */

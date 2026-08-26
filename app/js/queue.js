@@ -139,11 +139,14 @@ function rowHtml(it) {
   else if (it.status === "sent")
     acts = '<span class="badge b-st-sent" style="text-align:center;padding:9px">✓ Готово</span>'
          + _btn("soft","unsend","↩ Вернуть в «Оплачено»");
-  // правка и дубликат доступны в любом статусе; для оплаченного правка
-  // переспрашивает (обработчик в main.js)
-  acts += `<button class="btn soft" data-edit="${esc(it.id)}">✏️ Редактировать</button>`
-        + `<button class="btn soft" data-dup="${esc(it.id)}">⧉ Дублировать</button>`;
-  acts += _btn("del","del","Удалить");
+  // Второстепенные действия — узкой строкой иконок. Пять одинаковых кнопок в
+  // столбик не давали иерархии: смена статуса это работа, а правка и дубликат
+  // нужны изредка, и выглядеть они должны спокойнее.
+  acts += `<div class="acts-more">` +
+    `<button class="btn mini" data-edit="${esc(it.id)}" title="Редактировать заявку" aria-label="Редактировать">✏️</button>` +
+    `<button class="btn mini" data-dup="${esc(it.id)}" title="Создать такую же заявку" aria-label="Дублировать">⧉</button>` +
+    `<button class="btn mini danger" data-act="del" title="Удалить заявку" aria-label="Удалить">🗑</button>` +
+  `</div>`;
 
   return `<div class="row b-${u.key}" data-id="${it.id}">` +
     `<div class="main">` +
