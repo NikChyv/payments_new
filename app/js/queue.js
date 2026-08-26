@@ -108,12 +108,18 @@ export function render() {
   list.innerHTML = rows.map(rowHtml).join("");
 }
 
+// Все вложения отдельными значками — их может быть несколько.
+export function fileBadges(it) {
+  return (it.files || []).map(f => f.url
+    ? `<a class="badge b-file" href="${esc(f.url)}" target="_blank" rel="noopener" title="Открыть файл">📎 ${esc(f.name || "файл")}</a>`
+    : `<span class="badge b-file" title="${esc(f.name || "файл")}">📎 ${esc(f.name || "файл")}</span>`
+  ).join("");
+}
+
 function rowHtml(it) {
   const u = urgency(it);
   const dueBadge  = u.cls ? `<span class="badge ${u.cls}">${u.lbl}</span>` : "";
-  const fileBadge = it.file ? (it.file.url
-    ? `<a class="badge b-file" href="${esc(it.file.url)}" target="_blank" rel="noopener" title="Открыть файл">📎 ${esc(it.file.name)}</a>`
-    : `<span class="badge b-file" title="${esc(it.file.name)}">📎 ${esc(it.file.name)}</span>`) : "";
+  const fileBadge = fileBadges(it);
   const recBadge = it.recurrence !== "once" ? `<span class="badge b-rec">🔁 ${recLbl[it.recurrence]}</span>` : "";
   let receiptBadge = "";
   if (it.needReceipt && it.status !== "sent") {
@@ -133,6 +139,10 @@ function rowHtml(it) {
   else if (it.status === "sent")
     acts = '<span class="badge b-st-sent" style="text-align:center;padding:9px">✓ Готово</span>'
          + _btn("soft","unsend","↩ Вернуть в «Оплачено»");
+  // правка и дубликат доступны в любом статусе; для оплаченного правка
+  // переспрашивает (обработчик в main.js)
+  acts += `<button class="btn soft" data-edit="${esc(it.id)}">✏️ Редактировать</button>`
+        + `<button class="btn soft" data-dup="${esc(it.id)}">⧉ Дублировать</button>`;
   acts += _btn("del","del","Удалить");
 
   return `<div class="row b-${u.key}" data-id="${it.id}">` +
@@ -188,7 +198,8 @@ export function markPaid(it) {
   if (it.recurrence !== "once") {
     const nextDue = nextDueOf(it);
     const copy = JSON.parse(JSON.stringify(it));
-    copy.id = genId(); copy.status = "new"; copy.due = nextDue; copy.file = null; copy.created = todayStr();
+    // файлы не переносим: у следующего платежа будет свой счёт
+    copy.id = genId(); copy.status = "new"; copy.due = nextDue; copy.files = []; copy.created = todayStr();
     copy.autoCreated = true; // заявку не подавал клиент — уведомление не шлём
     state.items.push(copy);
     msg = "Оплачено. Создан следующий платёж на " + fmtDate(nextDue);

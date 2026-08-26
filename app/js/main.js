@@ -1,4 +1,4 @@
-import { useRemote, sb, load, save, uploadFile } from './supabase.js';
+import { useRemote, sb, load, save, uploadFiles, updatePaymentRemote } from './supabase.js';
 import { state } from './state.js';
 import { todayStr, fmtDate } from './dates.js';
 import { esc, toast, genId } from './utils.js';
@@ -50,7 +50,9 @@ function setFormMode(editing) {
   const btn   = document.querySelector("#payForm .submit");
   if (editing) {
     if (title) title.textContent = "Редактирование заявки";
-    if (sub)   sub.textContent   = "Измените нужные поля и сохраните. Доступно, пока бухгалтер не взял заявку в работу.";
+    if (sub)   sub.textContent   = state.TOKEN
+      ? "Измените нужные поля и сохраните. Доступно, пока бухгалтер не взял заявку в работу."
+      : "Измените нужные поля и сохраните. Если заявку оставлял клиент — он получит уведомление о правке.";
     if (btn)   btn.textContent   = "Сохранить изменения";
   } else {
     if (title) title.textContent = "Поручение на оплату";
@@ -59,27 +61,74 @@ function setFormMode(editing) {
   }
 }
 
-function fillFormForEdit(it) {
+// ---------- прикреплённые файлы ----------
+// state.formFiles — то, что уже загружено (при правке и дубликате). Выбранное
+// в поле «файл» добавится к этому списку при отправке.
+function renderFormFiles() {
+  const box = document.getElementById("fileList");
+  if (!box) return;
+  const kept = state.formFiles || [];
+  const input = document.getElementById("fileInput");
+  const picked = input ? Array.from(input.files || []) : [];
+
+  if (!kept.length && !picked.length) { box.innerHTML = ""; return; }
+
+  box.innerHTML =
+    kept.map((f, i) =>
+      `<span class="file-chip">📎 ${esc(f.name || "файл")}` +
+      `<button type="button" class="x" data-rmfile="${i}" title="Убрать файл">✕</button></span>`
+    ).join("") +
+    picked.map(f => `<span class="file-chip new">⬆ ${esc(f.name)}</span>`).join("");
+}
+
+function fillFormFields(it) {
   const f = document.getElementById("payForm");
   f.payee.value       = it.payee || "";
   f.amount.value      = it.amount != null ? it.amount : "";
   f.requisites.value  = it.requisites || "";
-  f.due.value         = it.due || todayStr();
   f.recurrence.value  = it.recurrence || "once";
   f.purpose.value     = it.purpose || "";
   f.needReceipt.checked = !!it.needReceipt;
-  // файл заранее подставить нельзя; если клиент не приложит новый — сохранится прежний
   const fi = document.getElementById("fileInput");
   if (fi) fi.value = "";
+  state.formFiles = (it.files || []).slice();
+  renderFormFiles();
+}
+
+function fillFormForEdit(it) {
+  fillFormFields(it);
+  document.getElementById("payForm").due.value = it.due || todayStr();
   state.editingId = it.id;
   setFormMode(true);
   switchView("form");
+}
+
+// Дубликат: те же данные, но это НОВАЯ заявка. Дату ставим на сегодня — у
+// повторного платежа она почти всегда другая, а старая только путала бы.
+function fillFormForDuplicate(it) {
+  fillFormFields(it);
+  document.getElementById("payForm").due.value = todayStr();
+  state.editingId = null;
+  // Файлы намеренно не переносим: у нового платежа свой счёт. Приложить забытый
+  // файл легко, а оплатить по позапрошлому счёту — уже не исправить.
+  state.formFiles = [];
+  renderFormFiles();
+  // сотруднику подставляем того же клиента, иначе дубликат уедет в личные задачи
+  const sel = document.getElementById("ncFormClient");
+  if (sel && !state.TOKEN) sel.value = it.client_id || "";
+  setFormMode(false);
+  switchView("form");
+  toast((it.files || []).length
+    ? "Данные скопированы. Проверьте дату и сумму, файл приложите заново"
+    : "Данные скопированы — проверьте дату и сумму");
 }
 
 function resetFormNew() {
   const f = document.getElementById("payForm");
   f.reset();
   state.editingId = null;
+  state.formFiles = [];
+  renderFormFiles();
   const dueEl = document.querySelector('input[name=due]');
   if (dueEl) dueEl.value = todayStr();
   if (state.TOKEN && state.clientInfo) f.client.value = state.clientInfo.name;
@@ -105,10 +154,17 @@ async function onSubmit(e) {
   }
   const fileInput = document.getElementById("fileInput");
   const submitBtn = f.querySelector(".submit");
-  const wasEditing = !!(state.TOKEN && state.editingId);
+  const wasEditing = !!state.editingId;
   submitBtn.disabled = true; submitBtn.textContent = wasEditing ? "Сохраняем…" : "Отправляем…";
 
-  const fileObj = await uploadFile(fileInput.files[0]);
+  // прежние вложения плюс только что выбранные
+  const uploaded = await uploadFiles(fileInput.files);
+  const files = (state.formFiles || []).concat(uploaded);
+  if (files.length > 10) {
+    toast("Больше 10 файлов не приложить — уберите лишние");
+    submitBtn.disabled = false; setFormMode(wasEditing);
+    return;
+  }
 
   try {
     if (state.TOKEN && state.editingId) {
@@ -122,7 +178,7 @@ async function onSubmit(e) {
         f.recurrence.value,
         f.purpose.value.trim(),
         f.needReceipt.checked,
-        fileObj,
+        files,
       );
     } else if (state.TOKEN) {
       // Шаг 7: через RPC submit_payment — заявка сама привязывается к клиенту и бухгалтеру
@@ -135,8 +191,21 @@ async function onSubmit(e) {
         f.recurrence.value,
         f.purpose.value.trim(),
         f.needReceipt.checked,
-        fileObj,
+        files,
       );
+    } else if (state.editingId) {
+      // сотрудник правит существующую заявку
+      const it = state.items.find(x => String(x.id) === String(state.editingId));
+      if (!it) throw new Error("Заявка не найдена");
+      it.payee       = f.payee.value.trim();
+      it.amount      = parseFloat(f.amount.value) || 0;
+      it.requisites  = f.requisites.value.trim();
+      it.due         = f.due.value;
+      it.recurrence  = f.recurrence.value;
+      it.purpose     = f.purpose.value.trim();
+      it.needReceipt = f.needReceipt.checked;
+      it.files       = files;
+      await updatePaymentRemote(it);
     } else {
       // сотрудник заводит заявку: для своего клиента или личную напоминалку
       const sel = document.getElementById("ncFormClient");
@@ -152,7 +221,7 @@ async function onSubmit(e) {
         payee: f.payee.value.trim(),
         amount: parseFloat(f.amount.value) || 0, requisites: f.requisites.value.trim(),
         due: f.due.value, recurrence: f.recurrence.value, purpose: f.purpose.value.trim(),
-        status: "new", needReceipt: f.needReceipt.checked, file: fileObj, created: todayStr(),
+        status: "new", needReceipt: f.needReceipt.checked, files, created: todayStr(),
       };
       state.items.push(rec);
       save();
@@ -182,16 +251,19 @@ async function onSubmit(e) {
     renderClient();
     toast(wasEditing ? "Заявка обновлена" : "Заявка отправлена — статус виден ниже");
   } else {
-    f.reset();
-    setFormMode(false); // вернуть текст кнопки «Отправить поручение»
-    const dueEl = document.querySelector('input[name=due]');
-    if (dueEl) dueEl.value = todayStr();
+    resetFormNew();
     const ok = document.getElementById("okMsg");
-    ok.textContent = "✓ Поручение отправлено бухгалтеру. Платёж «" + sentPayee + "» на " + fmtDate(sentDue) + " уже в очереди.";
+    ok.textContent = wasEditing
+      ? "✓ Заявка обновлена: «" + sentPayee + "» на " + fmtDate(sentDue) + "."
+      : "✓ Поручение отправлено бухгалтеру. Платёж «" + sentPayee + "» на " + fmtDate(sentDue) + " уже в очереди.";
     ok.className = "ok-msg show";
     setTimeout(() => { ok.className = "ok-msg"; }, 6000);
     refreshClients();
-    toast("Заявка добавлена в очередь");
+    // и после правки, и после новой заявки возвращаем в очередь: иначе сотрудник
+    // остаётся на форме и не видит результата — особенно заметно на дубликате
+    switchView("queue");
+    render();
+    toast(wasEditing ? "Заявка обновлена" : "Заявка добавлена в очередь");
   }
 }
 
@@ -227,11 +299,36 @@ async function init() {
   });
 
   document.getElementById("list").addEventListener("click", e => {
-    if (!state.TOKEN) { onListClick(e); return; } // сотрудник управляет статусами
-    const btn = e.target.closest && e.target.closest("button[data-edit]");
-    if (!btn) return;
-    const it = state.items.find(x => String(x.id) === btn.getAttribute("data-edit"));
-    if (it) fillFormForEdit(it);
+    const find = attr => {
+      const b = e.target.closest && e.target.closest(`button[${attr}]`);
+      if (!b) return null;
+      return state.items.find(x => String(x.id) === b.getAttribute(attr)) || null;
+    };
+
+    const dup = find("data-dup");
+    if (dup) { fillFormForDuplicate(dup); return; }
+
+    const edit = find("data-edit");
+    if (edit) {
+      // оплаченный платёж — уже факт, поэтому спрашиваем отдельно
+      if (!state.TOKEN && (edit.status === "paid" || edit.status === "sent") &&
+          !confirm("Платёж уже проведён. Точно менять данные?\n\nПравка попадёт в журнал изменений.")) return;
+      fillFormForEdit(edit);
+      return;
+    }
+
+    if (!state.TOKEN) onListClick(e); // сотрудник управляет статусами
+  });
+
+  // выбранные файлы показываем сразу, чтобы человек видел, что приложилось
+  const fileInput = document.getElementById("fileInput");
+  if (fileInput) fileInput.addEventListener("change", renderFormFiles);
+
+  document.getElementById("fileList").addEventListener("click", e => {
+    const x = e.target.closest && e.target.closest("button[data-rmfile]");
+    if (!x) return;
+    state.formFiles.splice(Number(x.getAttribute("data-rmfile")), 1);
+    renderFormFiles();
   });
 
   document.getElementById("payForm").addEventListener("submit", onSubmit);

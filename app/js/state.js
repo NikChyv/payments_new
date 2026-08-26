@@ -9,6 +9,7 @@ export const state = {
   quickFilter: "due",
   TOKEN: null,          // токен из ?t=<token> — режим клиента по токену
   clientInfo: null,     // {name} из client_by_token
-  editingId: null,      // id заявки, которую клиент сейчас редактирует (null = новая)
+  editingId: null,      // id редактируемой заявки (null = новая); теперь и у сотрудника
+  formFiles: [],        // уже приложенные файлы в открытой форме — к ним добавятся новые
   _pollStarted: false,
 };

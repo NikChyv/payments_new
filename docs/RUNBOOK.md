@@ -23,7 +23,7 @@ $env:Path = "$env:USERPROFILE\scoop\shims;$env:Path"     # supabase
 cd c:\Payment-automation-system\payments
 supabase start        # поднять локальный стек
 supabase db reset     # пересобрать БД с нуля: миграции + seed
-supabase test db      # прогнать тесты (ожидается 105 PASS)
+supabase test db      # прогнать тесты (ожидается 135 PASS)
 supabase stop         # остановить (данные сохраняются в docker volume)
 ```
 
@@ -76,10 +76,6 @@ git push                                      # 3. фронт -> GitHub Pages
 После пуша фронта Pages обновляется 1–2 минуты.
 
 ### 2.3 Ручные шаги (вне миграций)
-- **`edit_notify.sql`** — вставить в SQL Editor, заменив `<TELEGRAM_BOT_TOKEN>`
-  на реальный. Включает уведомление бухгалтерам о правке заявки.
-  ⚠️ Скрипт целиком пересоздаёт `edit_payment_by_token` — он уже содержит
-  вызов `check_rate_limit`, не удалять.
 - **`send_daily_reminder`** — в проде хранит реальный токен внутри тела. Если
   миграция его перезаписала плейсхолдером, восстановить из
   `supabase/daily_reminder.sql`, подставив реальные значения.

@@ -8,13 +8,17 @@ export const sb = useRemote ? window.supabase.createClient(SUPABASE_URL, SUPABAS
 
 const KEY = "pay_requests_v1";
 
+// Файлы живут в массиве `files`. Колонки file_url/file_name остаются зеркалом
+// первого файла — их читают утренняя рассылка, уведомление о новой заявке и бот.
 export function toRow(it) {
+  const files = Array.isArray(it.files) ? it.files : [];
   return {
     id: it.id, client: it.client, payee: it.payee, amount: it.amount,
     requisites: it.requisites || null, due: it.due, recurrence: it.recurrence,
     purpose: it.purpose || null, status: it.status, need_receipt: !!it.needReceipt,
-    file_url: it.file ? (it.file.url || null) : null,
-    file_name: it.file ? it.file.name : null,
+    files,
+    file_url:  files.length ? (files[0].url  || null) : null,
+    file_name: files.length ? (files[0].name || null) : null,
     created_at: it.created || todayStr(),
     client_id: it.client_id || null,
     auto_created: !!it.autoCreated,
@@ -23,11 +27,16 @@ export function toRow(it) {
 }
 
 export function fromRow(r) {
+  // заявки, созданные до перехода на массив, приходят только со старыми колонками
+  let files = Array.isArray(r.files) ? r.files : [];
+  if (!files.length && (r.file_url || r.file_name)) {
+    files = [{url: r.file_url || null, name: r.file_name || "файл"}];
+  }
   return {
     id: r.id, client: r.client, payee: r.payee, amount: Number(r.amount),
     requisites: r.requisites || "", due: r.due, recurrence: r.recurrence,
     purpose: r.purpose || "", status: r.status, needReceipt: !!r.need_receipt,
-    file: (r.file_url || r.file_name) ? {name: r.file_name || "файл", url: r.file_url || null} : null,
+    files,
     created: r.created_at, client_id: r.client_id || null,
     autoCreated: !!r.auto_created,
     createdByStaff: r.created_by_staff || null,
@@ -94,6 +103,31 @@ export async function uploadFile(file) {
   return {name: file.name, url: null};
 }
 
+// Загружает несколько файлов подряд. Один неудачный не отменяет остальные:
+// заявка важнее вложения, поэтому просто предупреждаем.
+export async function uploadFiles(fileList) {
+  const files = Array.from(fileList || []);
+  const out = [];
+  for (const f of files) {
+    const up = await uploadFile(f);
+    if (up && up.url) out.push({url: up.url, name: up.name});
+    else if (up) toast(`Файл «${up.name}» не загрузился — заявка сохранится без него`);
+  }
+  return out;
+}
+
+// Точечная правка заявки сотрудником. Именно update, а не общий upsert всех
+// строк: тогда БД видит изменение ровно одной заявки и правильно помечает,
+// кто её правил (last_edit_role) — от этого зависит уведомление клиенту.
+export async function updatePaymentRemote(it) {
+  if (!useRemote) { _saveLocal(); return; }
+  const row = toRow(it);
+  delete row.id;
+  delete row.created_at;
+  const res = await sb.from(TABLE).update(row).eq("id", it.id);
+  if (res.error) throw res.error;
+}
+
 export function removeRemote(idv) {
   if (useRemote) sb.from(TABLE).delete().eq("id", idv).then(res => { if (res.error) console.error(res.error); });
 }
@@ -103,16 +137,16 @@ function seed() {
   return [
     {id:genId(), client:"ООО «Ромашка»", payee:"Яндекс Директ", amount:45000, requisites:"УНП 191234567",
       due:addDays(t,-2), recurrence:"weekly", purpose:"Пополнение рекламного кабинета", status:"new",
-      needReceipt:true, file:null, created:t},
+      needReceipt:true, files:[], created:t},
     {id:genId(), client:"ИП Смирнов А.В.", payee:"Аренда офиса (ООО «Парус»)", amount:80000, requisites:"р/с 40702810…",
-      due:t, recurrence:"monthly", purpose:"Аренда за июнь", status:"new", needReceipt:true, file:null, created:t},
+      due:t, recurrence:"monthly", purpose:"Аренда за июнь", status:"new", needReceipt:true, files:[], created:t},
     {id:genId(), client:"ООО «Ромашка»", payee:"Поставщик «Техно»", amount:127500, requisites:"счёт №А-1188",
       due:addDays(t,2), recurrence:"once", purpose:"Оплата по счёту А-1188", status:"in_progress",
-      needReceipt:true, file:{name:"schet_A-1188.pdf", url:null}, created:t},
+      needReceipt:true, files:[{name:"schet_A-1188.pdf", url:null}], created:t},
     {id:genId(), client:"ООО «Вектор»", payee:"СБИС (отчётность)", amount:6900, requisites:"",
-      due:addDays(t,5), recurrence:"monthly", purpose:"Абонентская плата", status:"new", needReceipt:false, file:null, created:t},
+      due:addDays(t,5), recurrence:"monthly", purpose:"Абонентская плата", status:"new", needReceipt:false, files:[], created:t},
     {id:genId(), client:"ИП Смирнов А.В.", payee:"Налог УСН", amount:31200, requisites:"налог в бюджет",
       due:addDays(t,-1), recurrence:"once", purpose:"Авансовый платёж", status:"paid",
-      needReceipt:true, file:null, created:t},
+      needReceipt:true, files:[], created:t},
   ];
 }

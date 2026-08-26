@@ -164,6 +164,14 @@ body.client-mode .fg:first-of-type label{font-size:14px}
 .cl-link code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:#f1f5f9;border-radius:8px;padding:8px 10px;font-size:12.5px;color:#334155}
 .cl-link button{background:#fff;border:1px solid var(--line);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:13px;color:var(--accent);font-weight:600;white-space:nowrap}
 .cl-link button:hover{border-color:var(--accent)}
+/* приложенные файлы в форме заявки */
+.file-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.file-chip{display:inline-flex;align-items:center;gap:6px;background:#f1f5f9;border:1px solid var(--line);
+  border-radius:8px;padding:5px 8px;font-size:12.5px;color:#334155;max-width:100%}
+.file-chip.new{background:var(--green-bg);border-color:#bfe3cb;color:var(--green)}
+.file-chip .x{background:none;border:0;cursor:pointer;color:var(--muted);font-size:13px;line-height:1;padding:0 2px}
+.file-chip .x:hover{color:var(--red)}
+
 .cl-tools{display:flex;gap:8px;align-items:center;margin-top:8px}
 .cl-tools button{background:#fff;border:1px solid var(--line);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap}
 .cl-exp{color:var(--green)}

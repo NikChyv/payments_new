@@ -2,6 +2,7 @@ import { sb, useRemote, fromRow } from './supabase.js';
 import { state } from './state.js';
 import { esc } from './utils.js';
 import { fmtDate, fmtMoney } from './dates.js';
+import { fileBadges } from './queue.js';
 
 const recLbl = {once:"Разовый", weekly:"Еженедельно", monthly:"Ежемесячно"};
 
@@ -21,7 +22,7 @@ export async function loadPaymentsByToken(token) {
   state.items = (res.data || []).map(fromRow);
 }
 
-export async function submitPaymentByToken(token, payee, amount, requisites, due, recurrence, purpose, needReceipt, fileObj) {
+export async function submitPaymentByToken(token, payee, amount, requisites, due, recurrence, purpose, needReceipt, files) {
   const res = await sb.rpc("submit_payment", {
     p_token:        token,
     p_payee:        payee,
@@ -31,16 +32,17 @@ export async function submitPaymentByToken(token, payee, amount, requisites, due
     p_recurrence:   recurrence,
     p_purpose:      purpose    || null,
     p_need_receipt: needReceipt,
-    p_file_url:     fileObj ? (fileObj.url  || null) : null,
-    p_file_name:    fileObj ? (fileObj.name || null) : null,
+    p_file_url:     null,
+    p_file_name:    null,
+    p_files:        files || [],
   });
   if (res.error) throw res.error;
   return res.data; // id нового платежа
 }
 
-// Фича 2: клиент правит свою заявку, пока она 'new'. Файл: если новый не
-// приложен (fileObj пустой) — сервер сохраняет прежний.
-export async function editPaymentByToken(token, id, payee, amount, requisites, due, recurrence, purpose, needReceipt, fileObj) {
+// Фича 2: клиент правит свою заявку, пока она 'new'.
+// Файлы передаём полным списком — то, что клиент убрал в форме, исчезнет.
+export async function editPaymentByToken(token, id, payee, amount, requisites, due, recurrence, purpose, needReceipt, files) {
   const res = await sb.rpc("edit_payment_by_token", {
     p_token:        token,
     p_id:           id,
@@ -51,8 +53,9 @@ export async function editPaymentByToken(token, id, payee, amount, requisites, d
     p_recurrence:   recurrence,
     p_purpose:      purpose    || null,
     p_need_receipt: needReceipt,
-    p_file_url:     fileObj ? (fileObj.url  || null) : null,
-    p_file_name:    fileObj ? (fileObj.name || null) : null,
+    p_file_url:     null,
+    p_file_name:    null,
+    p_files:        files || [],
   });
   if (res.error) throw res.error;
   return res.data;
@@ -91,14 +94,15 @@ export function clSteps(it) {
 function rowHtmlClient(it) {
   const done = it.status === "paid" || it.status === "sent";
   const s = clStatusInfo(it);
-  const fileBadge = it.file ? (it.file.url
-    ? `<a class="badge b-file" href="${esc(it.file.url)}" target="_blank" rel="noopener" title="Открыть файл">📎 ${esc(it.file.name)}</a>`
-    : `<span class="badge b-file" title="${esc(it.file.name)}">📎 ${esc(it.file.name)}</span>`) : "";
+  const fileBadge = fileBadges(it);
   const recBadge = it.recurrence !== "once" ? `<span class="badge b-rec">🔁 ${recLbl[it.recurrence]}</span>` : "";
   // Пока заявка не взята в работу (status 'new') — клиент может её отредактировать.
   const editBtn = it.status === "new"
     ? `<button class="ghost cl-edit" data-edit="${esc(it.id)}">✏️ Редактировать</button>`
     : "";
+  // Повторить платёж можно с любой заявки, в том числе давно оплаченной —
+  // именно этого и просили: не вбивать одно и то же заново.
+  const dupBtn = `<button class="ghost cl-edit" data-dup="${esc(it.id)}">⧉ Повторить</button>`;
   return `<div class="row b-${done ? "green" : "gray"}">` +
     `<div class="main">` +
       `<div class="head"><span class="payee">${esc(it.payee)}</span><span class="amount">${fmtMoney(it.amount)}</span></div>` +
@@ -107,7 +111,7 @@ function rowHtmlClient(it) {
         (it.purpose    ? `<span>${esc(it.purpose)}</span>`    : "") +
         (it.requisites ? `<span>${esc(it.requisites)}</span>` : "") +
       `</div>` +
-      `<div class="cl-status"><span class="cl-now ${s.cls}">${s.icon} ${s.text}</span>${recBadge}${fileBadge}${editBtn}</div>` +
+      `<div class="cl-status"><span class="cl-now ${s.cls}">${s.icon} ${s.text}</span>${recBadge}${fileBadge}${editBtn}${dupBtn}</div>` +
       clSteps(it) +
     `</div>` +
   `</div>`;

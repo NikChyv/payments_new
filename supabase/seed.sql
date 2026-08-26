@@ -13,3 +13,15 @@ on conflict (token) do nothing;
 select submit_payment('demotoken1', 'Яндекс Директ',    4500,  'УНП 191234567', next_working_day(current_date + 1), 'monthly', 'Пополнение рекламы', true,  null, null);
 select submit_payment('demotoken1', 'Поставщик «Техно»',12750, 'счёт А-1188',    current_date,     'once',    'Оплата по счёту',    false, null, null);
 select submit_payment('demotoken2', 'Аренда офиса',     8000,  'р/с 40702810',   current_date - 1, 'monthly', 'Аренда за месяц',    true,  null, null);
+
+-- Хранилище файлов: повторяем боевую конфигурацию, иначе локально загрузка
+-- молча падает (uploadFile ловит ошибку и сохраняет заявку без вложения),
+-- и многофайловые сценарии невозможно проверить.
+insert into storage.buckets (id, name, public)
+values ('files', 'files', true)
+on conflict (id) do nothing;
+
+-- в проде вставка в этот бакет разрешена всем (клиент грузит счёт по токену)
+drop policy if exists "files_insert_any" on storage.objects;
+create policy "files_insert_any" on storage.objects
+  for insert to public with check (bucket_id = 'files');

@@ -132,7 +132,7 @@ supabase/
   functions/             исходники Edge Functions
   tests/                 pgTAP: 24 теста
   seed.sql               демо-данные (только локально)
-  edit_notify.sql        ручной прод-патч: уведомление о правке заявки
+  daily_reminder.sql     утренняя рассылка (токен подставляется в проде)
 .github/workflows/
   test.yml               CI: supabase start + supabase test db
   backup.yml             ежедневный шифрованный pg_dump

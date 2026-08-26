@@ -1,9 +1,12 @@
 -- pgTAP: журнал изменений payments.
--- Проверяет: INSERT/UPDATE(смена статуса)/DELETE логируются, не-статусные
--- правки не пишутся, порядок переходов, изоляция журнала от anon.
+-- Проверяет: INSERT/UPDATE(смена статуса)/EDIT(правка содержимого)/DELETE
+-- логируются, порядок переходов, состав правок, изоляция журнала от anon.
+--
+-- Правки содержимого начали писаться, когда бухгалтеру дали возможность менять
+-- заявки: без этого изменение суммы уже оплаченного платежа не оставляло следа.
 
 begin;
-select plan(9);
+select plan(13);
 
 insert into clients (id, name, token, staff_id)
   values ('cccccccc-cccc-cccc-cccc-cccccccccccc', 'Audit Co', 'tokAudit', null);
@@ -24,15 +27,42 @@ select is(
 
 update payments set status = 'in_progress' where id = :'pid';
 update payments set status = 'paid'        where id = :'pid';
-update payments set payee  = 'PA2'         where id = :'pid';  -- не-статусное: не логируется
-update payments set amount = 999           where id = :'pid';  -- тоже не логируется
-update payments set status = 'paid'        where id = :'pid';  -- статус тот же: не логируется
+update payments set payee  = 'PA2'         where id = :'pid';  -- правка содержимого
+update payments set amount = 999           where id = :'pid';  -- ещё одна правка
+update payments set status = 'paid'        where id = :'pid';  -- ничего не изменилось
+update payments set client_paid_notified = true where id = :'pid';  -- служебный флаг
 
 -- 3) ровно 2 записи смены статуса
 select is(
   (select count(*)::int from payments_audit where payment_id = :'pid' and action = 'UPDATE'),
   2,
-  'ровно 2 UPDATE-записи (правки без смены статуса не пишутся)'
+  'ровно 2 UPDATE-записи (правки содержимого идут отдельным действием)'
+);
+
+-- 3a-3d) правки содержимого
+select is(
+  (select count(*)::int from payments_audit where payment_id = :'pid' and action = 'EDIT'),
+  2,
+  'ровно 2 EDIT-записи: смена статуса и служебный флаг правкой не считаются'
+);
+select is(
+  (select changes from payments_audit
+    where payment_id = :'pid' and action = 'EDIT' order by id limit 1),
+  '{"payee": ["PA", "PA2"]}'::jsonb,
+  'в журнале записано, что именно поменялось: было → стало'
+);
+select is(
+  (select changes -> 'amount' from payments_audit
+    where payment_id = :'pid' and action = 'EDIT' order by id desc limit 1),
+  '[100, 999]'::jsonb,
+  'изменение суммы зафиксировано с обоими значениями'
+);
+-- правка не должна выдумывать смену статуса
+select is(
+  (select array_agg(distinct old_status) from payments_audit
+    where payment_id = :'pid' and action = 'EDIT'),
+  array['paid'],
+  'у правки статус остаётся прежним'
 );
 
 -- 4) переходы в правильном порядке
@@ -58,11 +88,11 @@ select is(
   'у DELETE нет нового статуса'
 );
 
--- 7) всего 4 записи по платежу
+-- 7) всего 6 записей по платежу
 select is(
   (select count(*)::int from payments_audit where payment_id = :'pid'),
-  4,
-  'всего 4 записи журнала (insert + 2 смены + delete)'
+  6,
+  'всего 6 записей журнала (insert + 2 смены статуса + 2 правки + delete)'
 );
 
 -- 8) журнал переживает удаление платежа (история не теряется)

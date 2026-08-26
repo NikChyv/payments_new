@@ -3,7 +3,7 @@
 -- Единственный путь для anon — SECURITY DEFINER функции по токену.
 
 begin;
-select plan(19);
+select plan(21);
 
 -- ---- RLS включён везде, где есть данные ----
 select ok((select relrowsecurity from pg_class where oid = 'public.payments'::regclass),
@@ -57,8 +57,14 @@ select ok(has_function_privilege('anon', 'public.client_by_token(text)', 'EXECUT
 select ok(has_function_privilege('anon', 'public.list_payments_by_token(text)', 'EXECUTE'),
           'anon по-прежнему видит свои платежи');
 select ok(has_function_privilege('anon',
-          'public.submit_payment(text,text,numeric,text,date,text,text,boolean,text,text)', 'EXECUTE'),
+          'public.submit_payment(text,text,numeric,text,date,text,text,boolean,text,text,jsonb)', 'EXECUTE'),
           'anon по-прежнему может подать заявку');
+select ok(has_function_privilege('anon',
+          'public.edit_payment_by_token(text,text,text,numeric,text,date,text,text,boolean,text,text,jsonb)', 'EXECUTE'),
+          'anon по-прежнему может исправить свою заявку');
+-- пересоздание функции сбрасывает права: если забыть grant, клиенты встанут
+select ok(not has_function_privilege('anon', 'public.normalize_files(jsonb,text,text)', 'EXECUTE'),
+          'служебная normalize_files анониму недоступна');
 
 select * from finish();
 rollback;
