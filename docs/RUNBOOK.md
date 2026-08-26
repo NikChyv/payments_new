@@ -87,6 +87,9 @@ git push                                      # 3. фронт -> GitHub Pages
 4. В боте `/payments` — заявка видна.
 5. Бухгалтер жмёт «Оплачено» → клиенту в бот пришло «✅ оплачено» (один раз).
 6. Экран «Клиенты» → «🔄 Перевыпустить» → старая ссылка перестала открываться.
+7. Приложить к заявке фото или PDF — файл загрузился и открывается по ссылке.
+   Трогали ограничения бакета — проверить и отказ: файл заведомо не того типа
+   должен получить внятное сообщение о причине, а не «файл не загрузился».
 
 ## 3. Откат
 
@@ -231,6 +234,25 @@ https://api.telegram.org/bot<ТОКЕН>/setWebhook?url=https://gmvhphuabiyggfur
 | **Завести сотрудника** | Supabase → Auth → Add user → скопировать UID → `insert into staff (id, name, is_admin) values ('UID','Имя',false) on conflict (id) do nothing;` |
 | **Добавить получателя уведомлений** | его chat_id (`/myid` в боте) → в секрет `TELEGRAM_CHAT_ID` (через запятую) **и** в массив `chat_ids` в `send_daily_reminder` |
 | **Посмотреть историю платежа** | `select * from payments_audit where payment_id = '<id>' order by changed_at;` |
+| **Удалить файл из Storage** | только через Storage API, см. ниже |
+
+### 7.1 Удалить файл из Storage
+
+Через SQL нельзя: `delete from storage.objects` перехватывает триггер
+`storage.protect_delete()` («Direct deletion from storage tables is not allowed»).
+Он защищает от осиротевших объектов — строку удалить, а файл в хранилище оставить.
+Обычный `delete` вдобавок молча не сработает и без триггера: RLS на
+`storage.objects` не имеет политики `DELETE`, а `postgres` не обходит RLS.
+
+Нужен `service_role`-ключ; вытащить его можно CLI, в панель лезть не обязательно:
+
+```bash
+supabase projects api-keys --project-ref gmvhphuabiyggfurfhmc   # взять service_role
+curl -X DELETE "https://gmvhphuabiyggfurfhmc.supabase.co/storage/v1/object/files/<путь>" \
+  -H "Authorization: Bearer $SERVICE_ROLE" -H "apikey: $SERVICE_ROLE"
+```
+
+Ключ в историю команд и в репозиторий не класть.
 
 ## 8. Контрольный список перед релизом
 
