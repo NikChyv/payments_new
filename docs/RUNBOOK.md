@@ -23,7 +23,7 @@ $env:Path = "$env:USERPROFILE\scoop\shims;$env:Path"     # supabase
 cd c:\Payment-automation-system\payments
 supabase start        # поднять локальный стек
 supabase db reset     # пересобрать БД с нуля: миграции + seed
-supabase test db      # прогнать тесты (ожидается 135 PASS)
+supabase test db      # прогнать тесты (ожидается 148 PASS)
 supabase stop         # остановить (данные сохраняются в docker volume)
 ```
 

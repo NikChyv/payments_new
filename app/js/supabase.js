@@ -83,9 +83,31 @@ function _saveLocal() {
   try { localStorage.setItem(KEY, JSON.stringify(state.items)); } catch(e) {}
 }
 
+// Бакет принимает только эти типы и только до 10 МБ (миграция
+// 20260826000003_storage_limits.sql). Проверяем до отправки: браузер иначе
+// выгрузит все 30 МБ по мобильному интернету и лишь потом получит отказ.
+export const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const ALLOWED_EXT = ["jpg","jpeg","png","heic","heif","webp","pdf","xlsx","docx","xls","doc"];
+
+// Тип проверяем по расширению, а не по file.type: браузеры для heic и части
+// офисных форматов отдают пустую строку, и проверка по типу зарубила бы годный
+// файл. Настоящий фильтр всё равно на стороне бакета — здесь только понятное
+// сообщение вместо отказа сервера.
+function fileProblem(file) {
+  const ext = (file.name.split(".").pop() || "").toLowerCase();
+  if (!ALLOWED_EXT.includes(ext)) return "тип";
+  if (file.size > MAX_FILE_BYTES) return "размер";
+  return null;
+}
+
+// Возвращает {name, url} при успехе и {name, url: null, reason} при отказе.
+// Сообщение человеку показывает uploadFiles — иначе на один файл выскакивало бы
+// по два уведомления: причина и общее «не загрузился».
 export async function uploadFile(file) {
   if (!file) return null;
   if (useRemote) {
+    const problem = fileProblem(file);
+    if (problem) return {name: file.name, url: null, reason: problem};
     try {
       const rand = crypto.getRandomValues(new Uint8Array(16));
       const hex = Array.from(rand, b => b.toString(16).padStart(2, "0")).join("");
@@ -96,22 +118,28 @@ export async function uploadFile(file) {
       return {name: file.name, url: pub.data.publicUrl};
     } catch(e) {
       console.error(e);
-      toast("Файл не загрузился — заявка сохранена без файла");
-      return {name: file.name, url: null};
+      return {name: file.name, url: null, reason: "сбой"};
     }
   }
   return {name: file.name, url: null};
 }
 
 // Загружает несколько файлов подряд. Один неудачный не отменяет остальные:
-// заявка важнее вложения, поэтому просто предупреждаем.
+// заявка важнее вложения, поэтому просто предупреждаем — но с причиной, иначе
+// человек шлёт тот же самый файл по кругу.
 export async function uploadFiles(fileList) {
   const files = Array.from(fileList || []);
   const out = [];
   for (const f of files) {
     const up = await uploadFile(f);
-    if (up && up.url) out.push({url: up.url, name: up.name});
-    else if (up) toast(`Файл «${up.name}» не загрузился — заявка сохранится без него`);
+    if (up && up.url) { out.push({url: up.url, name: up.name}); continue; }
+    if (!up) continue;
+    const why = {
+      "тип":    "такой файл не принимается: нужно фото, PDF, Word или Excel",
+      "размер": "больше 10 МБ — приложите файл поменьше",
+      "сбой":   "не загрузился",
+    }[up.reason] || "не загрузился";
+    toast(`Файл «${up.name}» ${why} — заявка сохранится без него`);
   }
   return out;
 }

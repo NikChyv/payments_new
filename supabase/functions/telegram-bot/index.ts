@@ -113,21 +113,62 @@ async function getClient(tgId: number) {
 
 // ---------- загрузка файла из Telegram в Storage ----------
 
-async function uploadTelegramFile(fileId: string, fallbackName: string, mime?: string) {
+// Бакет принимает только перечисленные типы и только до 10 МБ (миграция
+// 20260826000003_storage_limits.sql). Лимиты бакета действуют и на service_role,
+// так что бот под них тоже попадает. Проверяем здесь же, до скачивания файла:
+// иначе отказ прилетит от Storage уже после закачки, и человек увидит невнятное
+// «файл не загрузился» вместо причины.
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+
+const MIME_BY_EXT: Record<string, string> = {
+  jpg:  "image/jpeg",  jpeg: "image/jpeg", png: "image/png",
+  heic: "image/heic",  heif: "image/heif", webp: "image/webp",
+  pdf:  "application/pdf",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls:  "application/vnd.ms-excel",
+  doc:  "application/msword",
+};
+const ALLOWED_MIME = new Set(Object.values(MIME_BY_EXT));
+
+// Telegram присылает mime_type не всегда, и раньше на этот случай подставлялся
+// application/octet-stream — бакет такой тип больше не принимает (под ним прошло
+// бы что угодно). Определяем тип по расширению; если и оно ни о чём не говорит,
+// честно отказываем, а не подписываем файл наугад.
+function resolveMime(name: string, declared?: string): string | null {
+  if (declared && ALLOWED_MIME.has(declared)) return declared;
+  const ext = (name.split(".").pop() || "").toLowerCase();
+  return MIME_BY_EXT[ext] ?? null;
+}
+
+type UploadResult =
+  | { ok: true; url: string; name: string }
+  | { ok: false; reason: "type" | "size" | "fail" };
+
+async function uploadTelegramFile(
+  fileId: string, fallbackName: string, mime?: string, sizeHint?: number,
+): Promise<UploadResult> {
+  const contentType = resolveMime(fallbackName || "", mime);
+  if (!contentType) return { ok: false, reason: "type" };
+  if (sizeHint && sizeHint > MAX_FILE_BYTES) return { ok: false, reason: "size" };
+
   const r1 = await fetch(`https://api.telegram.org/bot${BOT}/getFile?file_id=${fileId}`);
   const j1 = await r1.json();
-  if (!j1.ok) return null;
+  if (!j1.ok) return { ok: false, reason: "fail" };
   const filePath: string = j1.result.file_path;
   const r2 = await fetch(`https://api.telegram.org/file/bot${BOT}/${filePath}`);
   const buf = await r2.arrayBuffer();
+  // file_size Telegram присылает не всегда — перепроверяем по факту
+  if (buf.byteLength > MAX_FILE_BYTES) return { ok: false, reason: "size" };
+
   const rand = crypto.getRandomValues(new Uint8Array(16));
   const hex = Array.from(rand, b => b.toString(16).padStart(2, "0")).join("");
   const name = (fallbackName || "file").replace(/[^\w.\-]+/g, "_");
   const storagePath = hex + "/" + name;
-  const up = await sb.storage.from("files").upload(storagePath, buf, { contentType: mime || "application/octet-stream" });
-  if (up.error) { console.error(up.error); return null; }
+  const up = await sb.storage.from("files").upload(storagePath, buf, { contentType });
+  if (up.error) { console.error(up.error); return { ok: false, reason: "fail" }; }
   const pub = sb.storage.from("files").getPublicUrl(storagePath);
-  return { url: pub.data.publicUrl, name: fallbackName || "файл" };
+  return { ok: true, url: pub.data.publicUrl, name: fallbackName || "файл" };
 }
 
 // ---------- экран подтверждения ----------
@@ -234,14 +275,25 @@ async function handleMessage(msg: any) {
     if (!client) { await send(chatId, "Вы ещё не привязаны. Откройте персональную ссылку и нажмите «Старт»."); return; }
     const session = await getSession(tgId);
     if (!session || session.step !== "file") { await send(chatId, "Чтобы создать заявку: /new"); return; }
-    let up = null;
+    let up: UploadResult;
     if (msg.document) {
-      up = await uploadTelegramFile(msg.document.file_id, msg.document.file_name || "файл", msg.document.mime_type);
+      up = await uploadTelegramFile(
+        msg.document.file_id, msg.document.file_name || "файл",
+        msg.document.mime_type, msg.document.file_size,
+      );
     } else {
       const ph = msg.photo[msg.photo.length - 1]; // самый крупный размер
-      up = await uploadTelegramFile(ph.file_id, "photo.jpg", "image/jpeg");
+      up = await uploadTelegramFile(ph.file_id, "photo.jpg", "image/jpeg", ph.file_size);
     }
-    if (!up) { await send(chatId, "Файл не загрузился. Попробуйте ещё раз или нажмите «Пропустить».", KB.skip); return; }
+    if (!up.ok) {
+      // причина отказа человеку важнее факта отказа: иначе он шлёт то же самое по кругу
+      await send(chatId, {
+        type: "Такой файл не принимается. Пришлите фото счёта, PDF или документ Word/Excel.",
+        size: "Файл больше 10 МБ. Сфотографируйте счёт с меньшим качеством или пришлите PDF.",
+        fail: "Файл не загрузился. Попробуйте ещё раз или нажмите «Пропустить».",
+      }[up.reason], KB.skip);
+      return;
+    }
     session.draft.file_url = up.url; session.draft.file_name = up.name;
     await setSession(tgId, "confirm", session.draft);
     await showConfirm(chatId, session.draft);
