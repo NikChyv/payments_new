@@ -38,6 +38,18 @@ async function tg(chatId: string | number, text: string) {
   return res.ok;
 }
 
+// Один Telegram-аккаунт может быть привязан к нескольким фирмам сразу (человек
+// ведёт две компании). Тогда «Ваш платёж «Белтелеком» оплачен» бесполезен — он
+// не понимает, чей это платёж. Подписываем фирму, но только таким людям:
+// остальным это лишняя строка в каждом сообщении.
+async function firmSuffix(telegramId: number, firm: unknown) {
+  const name = String(firm ?? "").trim();
+  if (!name) return "";
+  const { count } = await sb.from("clients")
+    .select("id", { count: "exact", head: true }).eq("telegram_id", telegramId);
+  return (count ?? 1) > 1 ? `\n\n🏢 ${esc(name)}` : "";
+}
+
 // Что именно изменилось — списком «было → стало». Только те поля, которые видит
 // человек: служебные флаги уведомлений сюда попадать не должны, иначе функция
 //сама себе устроит рассылку, проставив флаг после отправки.
@@ -93,6 +105,8 @@ serve(async (req) => {
         .from("clients").select("telegram_id").eq("id", rec.client_id).maybeSingle();
       if (!client || !client.telegram_id) return new Response("no telegram");
 
+      text += await firmSuffix(client.telegram_id, rec.client);
+
       // флаг ставим только после успешной отправки — иначе уведомление потеряется
       // навсегда: повторно оно уже не уйдёт
       if (await tg(client.telegram_id, text)) {
@@ -115,7 +129,8 @@ serve(async (req) => {
       if (!client || !client.telegram_id) return new Response("no telegram");
 
       await tg(client.telegram_id,
-        `✏️ Бухгалтер изменил вашу заявку «${esc(rec.payee)}»:\n\n` + changes.join("\n"));
+        `✏️ Бухгалтер изменил вашу заявку «${esc(rec.payee)}»:\n\n` + changes.join("\n") +
+        await firmSuffix(client.telegram_id, rec.client));
       return new Response("ok");
     }
 

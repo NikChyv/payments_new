@@ -4,7 +4,7 @@
 -- бухгалтера они бы просто пропали.
 
 begin;
-select plan(12);
+select plan(17);
 
 insert into auth.users (id) values
   ('000000ad-0000-0000-0000-0000000000ad'),
@@ -100,6 +100,44 @@ select is(
      ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','cccccccc-cccc-cccc-cccc-cccccccccccc')),
   2::bigint,
   'другие клиенты не затронуты'
+);
+
+-- ---- 7) две фирмы на одном Telegram ----
+-- Человек ведёт две компании и привязал к боту обе. Удаление одной не должно
+-- стирать его незаконченную переписку: она общая на чат, а не на фирму.
+-- Раньше tg_sessions чистились безусловно, и человек терял набранную заявку
+-- по ОСТАВШЕЙСЯ фирме.
+insert into clients (id, name, token, staff_id, telegram_id) values
+  ('11111111-1111-1111-1111-111111111111', 'TwinA', 'twinatok', null, 555000777),
+  ('22222222-2222-2222-2222-222222222222', 'TwinB', 'twinbtok', null, 555000777);
+insert into tg_sessions (telegram_id, step) values (555000777, 'payee');
+
+-- страховка от возврата ограничения: если кто-то навесит на telegram_id
+-- уникальный индекс, эта вставка упадёт и тест покраснеет здесь, а не в проде
+select is(
+  (select count(*) from clients where telegram_id = 555000777),
+  2::bigint,
+  'один telegram_id разрешён у нескольких фирм'
+);
+
+select lives_ok(
+  $$ select delete_client('11111111-1111-1111-1111-111111111111') $$,
+  'первая из двух фирм удаляется'
+);
+select is(
+  (select count(*) from tg_sessions where telegram_id = 555000777),
+  1::bigint,
+  'диалог с ботом уцелел: у человека осталась вторая фирма'
+);
+
+select lives_ok(
+  $$ select delete_client('22222222-2222-2222-2222-222222222222') $$,
+  'вторая фирма тоже удаляется'
+);
+select is(
+  (select count(*) from tg_sessions where telegram_id = 555000777),
+  0::bigint,
+  'после удаления последней фирмы диалог подчищен'
 );
 
 select * from finish();

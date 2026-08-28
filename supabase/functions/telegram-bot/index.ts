@@ -106,9 +106,61 @@ async function clearSession(tgId: number) {
   await sb.from("tg_sessions").delete().eq("telegram_id", tgId);
 }
 
-async function getClient(tgId: number) {
-  const { data } = await sb.from("clients").select("id,name,token").eq("telegram_id", tgId).maybeSingle();
-  return data as { id: string; name: string; token: string } | null;
+type ClientRow = { id: string; name: string; token: string };
+
+// Один Telegram-аккаунт может быть привязан к НЕСКОЛЬКИМ фирмам: у части клиентов
+// их две (одно физлицо ведёт две компании). Раньше `/start` затирал прежнюю
+// привязку, и человек с двумя фирмами получал уведомления только по последней.
+//
+// Уведомлениям множественность не мешает: они идут от заявки к фирме
+// (payments.client_id → clients.telegram_id), а не наоборот. Мешает она только
+// диалогу, которому нужно знать, ОТ ЧЬЕГО ИМЕНИ заводить заявку, — поэтому
+// здесь список, а не одна запись, и `.maybeSingle()` тут больше нельзя: на двух
+// строках он возвращает ошибку, и бот отвечал бы «вы ещё не привязаны».
+async function getClients(tgId: number): Promise<ClientRow[]> {
+  const { data } = await sb.from("clients")
+    .select("id,name,token").eq("telegram_id", tgId).order("name");
+  return (data ?? []) as ClientRow[];
+}
+
+const NOT_BOUND = "Вы ещё не привязаны. Откройте персональную ссылку от бухгалтера и нажмите «Старт».";
+
+// Заявку вслепую за человека с двумя фирмами создавать нельзя: попадёт не в ту
+// компанию, и это увидят только на сверке. Пока выбор фирмы в боте не сделан,
+// честно отправляем такого человека на персональную ссылку. Сами ссылки в чат
+// не пишем — токен в переписке остаётся навсегда, а у клиента они уже есть.
+function manyFirms(list: ClientRow[]) {
+  return "У вас привязано несколько фирм: " + list.map((c) => `«${c.name}»`).join(", ") + ".\n\n" +
+    "✅ Уведомления об оплате приходят по всем — делать ничего не нужно.\n\n" +
+    "А вот новую заявку через бота я принять не могу: не пойму, от какой фирмы она. " +
+    "Откройте персональную ссылку нужной фирмы — ту, что присылал бухгалтер, — и заведите заявку там.";
+}
+
+// Активные платежи по всем фирмам чата. Заголовок с названием фирмы печатаем
+// только когда фирм несколько: у остальных он был бы лишним шумом.
+async function sendPayments(chatId: number, list: ClientRow[]) {
+  const { data: items } = await sb.from("payments")
+    .select("payee,amount,due,status,client_id")
+    .in("client_id", list.map((c) => c.id))
+    .in("status", ["new", "in_progress"]).order("due");
+
+  if (!items || items.length === 0) { await send(chatId, "Активных платежей нет. 🎉"); return; }
+
+  const line = (it: any, i: number) =>
+    `${i + 1}. <b>${it.payee}</b> — ${fmtMoney(it.amount)}\n   📅 ${fmtDate(it.due)} · ${statusLabel(it.status)}`;
+
+  if (list.length === 1) {
+    await send(chatId, `<b>Ваши платежи (${list[0].name})</b>\n\n` + items.map(line).join("\n\n"));
+    return;
+  }
+
+  const blocks: string[] = [];
+  for (const c of list) {
+    const own = items.filter((it: any) => it.client_id === c.id);
+    if (!own.length) continue;
+    blocks.push(`<b>${c.name}</b>\n\n` + own.map(line).join("\n\n"));
+  }
+  await send(chatId, "<b>Ваши платежи</b>\n\n" + blocks.join("\n\n———\n\n"));
 }
 
 // ---------- загрузка файла из Telegram в Storage ----------
@@ -271,8 +323,9 @@ async function handleMessage(msg: any) {
 
   // вложение (фото/документ) — только на шаге file
   if (msg.photo || msg.document) {
-    const client = await getClient(tgId);
-    if (!client) { await send(chatId, "Вы ещё не привязаны. Откройте персональную ссылку и нажмите «Старт»."); return; }
+    const list = await getClients(tgId);
+    if (list.length === 0) { await send(chatId, NOT_BOUND); return; }
+    if (list.length > 1) { await send(chatId, manyFirms(list)); return; }
     const session = await getSession(tgId);
     if (!session || session.step !== "file") { await send(chatId, "Чтобы создать заявку: /new"); return; }
     let up: UploadResult;
@@ -322,21 +375,46 @@ async function handleMessage(msg: any) {
       return;
     }
 
-    // снимаем привязку этого Telegram с других клиентов, иначе один telegram_id
-    // может оказаться у нескольких клиентов и поиск перестаёт работать
-    await sb.from("clients").update({ telegram_id: null }).eq("telegram_id", chatId);
+    // Привязку с других фирм НЕ снимаем. Раньше снимали — из-за этого человек,
+    // ведущий две компании, физически не мог получать уведомления по обеим:
+    // вторая ссылка отключала первую. Несколько фирм на одном чате база
+    // допускает (на clients.telegram_id обычный индекс, не уникальный), а
+    // уведомления идут от заявки к фирме и от множественности не страдают.
     const { error: bindErr } = await sb
       .from("clients").update({ telegram_id: chatId }).eq("id", target.id);
 
-    if (bindErr) await send(chatId, "Не удалось привязать аккаунт. Попробуйте ещё раз или напишите бухгалтеру.");
-    else await send(chatId, `Готово! Аккаунт «${target.name}» привязан.\n\n${HELP}`);
+    if (bindErr) {
+      await send(chatId, "Не удалось привязать аккаунт. Попробуйте ещё раз или напишите бухгалтеру.");
+      return;
+    }
+
+    const list = await getClients(chatId);
+    if (list.length > 1) {
+      await send(chatId,
+        `Готово! Фирма «${target.name}» привязана.\n\n` +
+        `Теперь уведомления приходят по ${list.length} фирмам: ` +
+        list.map((c) => `«${c.name}»`).join(", ") + ".\n\n" +
+        "Заявки заводите по персональной ссылке нужной фирмы — так она точно не уйдёт не на ту компанию.");
+    } else {
+      await send(chatId, `Готово! Аккаунт «${target.name}» привязан.\n\n${HELP}`);
+    }
     return;
   }
   if (text === "/help") { await send(chatId, HELP); return; }
   if (text === "/myid") { await send(chatId, `Ваш chat_id: <code>${chatId}</code>`); return; }
 
-  const client = await getClient(tgId);
-  if (!client) { await send(chatId, "Вы ещё не привязаны. Откройте персональную ссылку от бухгалтера и нажмите «Старт»."); return; }
+  const list = await getClients(tgId);
+  if (list.length === 0) { await send(chatId, NOT_BOUND); return; }
+
+  // «Мои платежи» работает и с несколькими фирмами: это чтение, перепутать
+  // ничего нельзя, а человеку с двумя компаниями список нужен как раз целиком.
+  if (text === "/payments" || /мои платеж/i.test(text)) {
+    await sendPayments(chatId, list);
+    return;
+  }
+
+  // Всё остальное — диалог заведения заявки, он требует одной конкретной фирмы.
+  if (list.length > 1) { await send(chatId, manyFirms(list)); return; }
 
   if (text === "/cancel") {
     await clearSession(tgId);
@@ -347,17 +425,6 @@ async function handleMessage(msg: any) {
   if (text === "/new" || /нов(ая|ое) (заявк|поручени)/i.test(text)) {
     await setSession(tgId, "payee", {});
     await send(chatId, "Создаём заявку. В любой момент — /cancel.\n\n💳 Кому платим (получатель)?");
-    return;
-  }
-
-  if (text === "/payments" || /мои платеж/i.test(text)) {
-    const { data: items } = await sb.from("payments")
-      .select("payee,amount,due,status").eq("client_id", client.id)
-      .in("status", ["new", "in_progress"]).order("due");
-    if (!items || items.length === 0) { await send(chatId, "Активных платежей нет. 🎉"); return; }
-    const lines = items.map((it: any, i: number) =>
-      `${i + 1}. <b>${it.payee}</b> — ${fmtMoney(it.amount)}\n   📅 ${fmtDate(it.due)} · ${statusLabel(it.status)}`);
-    await send(chatId, `<b>Ваши платежи (${client.name})</b>\n\n` + lines.join("\n\n"));
     return;
   }
 
@@ -374,7 +441,12 @@ async function handleCallback(cq: any) {
   const data = cq.data as string;
   await answerCallback(cq.id);
 
-  const client = await getClient(tgId);
+  // Кнопка могла прилететь из старого сообщения — например, человек начал
+  // заявку одной фирмой, а потом привязал вторую. Заявку от имени наугад
+  // выбранной фирмы отправлять нельзя, поэтому здесь та же проверка.
+  const list = await getClients(tgId);
+  if (list.length > 1) { await clearSession(tgId); await send(chatId, manyFirms(list)); return; }
+  const client = list[0];
   const session = await getSession(tgId);
   if (!client || !session) { await send(chatId, "Сессия не найдена. Начните заново: /new"); return; }
   const d = session.draft;
