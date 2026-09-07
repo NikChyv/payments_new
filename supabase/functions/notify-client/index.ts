@@ -38,6 +38,32 @@ async function tg(chatId: string | number, text: string) {
   return res.ok;
 }
 
+// Отправка документа клиенту.
+//
+// Шлём именно sendDocument и именно БАЙТАМИ, а не ссылкой. Две причины:
+//
+// 1. Пересылка. Клиент перешлёт сообщение поставщику как подтверждение оплаты —
+//    Telegram передаст сам файл, и наша вечная публичная ссылка никуда не уйдёт.
+// 2. Имя файла. Если отдать Telegram URL, он возьмёт имя из адреса, а в пути
+//    кириллица заменена подчёркиваниями при загрузке — клиент получил бы
+//    «________.pdf» и переслал бы это поставщику. Подставляя байты, имя задаём
+//    сами и человеческое.
+//
+// sendPhoto не годится даже для фотографии платёжки: Telegram её пережмёт.
+async function tgDocument(chatId: string | number, url: string, name: string, caption?: string) {
+  const file = await fetch(url);
+  if (!file.ok) { console.error(`Не скачался файл ${url}: ${file.status}`); return false; }
+
+  const form = new FormData();
+  form.append("chat_id", String(chatId));
+  form.append("document", new Blob([await file.arrayBuffer()]), name || "document");
+  if (caption) { form.append("caption", caption); form.append("parse_mode", "HTML"); }
+
+  const res = await fetch(`https://api.telegram.org/bot${BOT}/sendDocument`, { method: "POST", body: form });
+  if (!res.ok) console.error(`Telegram sendDocument error for ${chatId}:`, await res.text());
+  return res.ok;
+}
+
 // Один Telegram-аккаунт может быть привязан к нескольким фирмам сразу (человек
 // ведёт две компании). Тогда «Ваш платёж «Белтелеком» оплачен» бесполезен — он
 // не понимает, чей это платёж. Подписываем фирму, но только таким людям:
@@ -86,6 +112,44 @@ serve(async (req) => {
     const old = body.old_record;
 
     if (body.type !== "UPDATE" || !rec || !old) return new Response("skip");
+
+    // ---------- 0. платёжный документ от бухгалтера ----------
+    // Стоит ПЕРЕД разбором статуса и правок намеренно. Прикрепление документа
+    // приходит сюда как обычный UPDATE от сотрудника: не перехвати мы его
+    // здесь, ниже сработала бы ветка «изменил заявку», а diffLines про
+    // staff_files не знает и вернула бы «skip» — клиент не получил бы ничего.
+    const docs: Array<{ url?: string; name?: string }> = Array.isArray(rec.staff_files) ? rec.staff_files : [];
+    const alreadySent = Number(rec.client_docs_notified ?? 0);
+    const fresh = docs.slice(alreadySent).filter((d) => d && d.url);
+
+    if (fresh.length && rec.client_id) {
+      const { data: client } = await sb
+        .from("clients").select("telegram_id").eq("id", rec.client_id).maybeSingle();
+      if (!client || !client.telegram_id) return new Response("no telegram");
+
+      // Подпись только у первого файла — иначе один и тот же текст повторится
+      // под каждым вложением. Пишем её так, чтобы пересылка поставщику была
+      // самодостаточной: из сообщения понятно, что за платёж и что он прошёл.
+      const caption = `✅ Платёж «${esc(rec.payee)}» на ${fmtMoney(Number(rec.amount))} оплачен.`
+        + `\n📄 Во вложении — платёжный документ.`
+        + await firmSuffix(client.telegram_id, rec.client);
+
+      let sent = 0;
+      for (const d of fresh) {
+        const ok = await tgDocument(client.telegram_id, d.url!, d.name || "документ", sent === 0 ? caption : undefined);
+        if (!ok) break;   // не дошёл — счётчик не двигаем, при следующем касании допошлём
+        sent++;
+      }
+
+      if (sent > 0) {
+        await sb.from("payments").update({
+          client_docs_notified: alreadySent + sent,
+          // документ ушёл — текстовое «документ отправлен» теперь только дублировало бы
+          client_sent_notified: true,
+        }).eq("id", rec.id);
+      }
+      return new Response("ok");
+    }
 
     // ---------- 1. смена статуса: уведомляем клиента ----------
     let text: string | null = null;

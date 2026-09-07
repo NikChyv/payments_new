@@ -2,7 +2,7 @@ import { sb, useRemote, fromRow } from './supabase.js';
 import { state } from './state.js';
 import { esc } from './utils.js';
 import { fmtDate, fmtMoney } from './dates.js';
-import { fileBadges } from './queue.js';
+import { fileBadges, staffFileBadges } from './queue.js';
 
 const recLbl = {once:"Разовый", weekly:"Еженедельно", monthly:"Ежемесячно"};
 
@@ -111,7 +111,7 @@ function rowHtmlClient(it) {
         (it.purpose    ? `<span>${esc(it.purpose)}</span>`    : "") +
         (it.requisites ? `<span>${esc(it.requisites)}</span>` : "") +
       `</div>` +
-      `<div class="cl-status"><span class="cl-now ${s.cls}">${s.icon} ${s.text}</span>${recBadge}${fileBadge}${editBtn}${dupBtn}</div>` +
+      `<div class="cl-status"><span class="cl-now ${s.cls}">${s.icon} ${s.text}</span>${recBadge}${fileBadge}${staffFileBadges(it)}${editBtn}${dupBtn}</div>` +
       clSteps(it) +
     `</div>` +
   `</div>`;

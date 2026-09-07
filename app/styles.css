@@ -76,6 +76,9 @@ main{padding:22px 0 60px}
 .b-rec{background:#e7effe;color:var(--blue)}
 .b-file{background:#f1f5f9;color:#334155;cursor:pointer;text-decoration:none}
 .b-file .clip{font-size:18px;line-height:1;vertical-align:-2px;margin-right:2px}
+/* документ ОТ бухгалтера — зелёный, чтобы не путался со счётом ОТ клиента,
+   который лежит в той же строке серым */
+.b-doc{background:var(--green-bg);color:var(--green);cursor:pointer;text-decoration:none;font-weight:600}
 .acts{display:flex;flex-direction:column;gap:8px;min-width:172px}
 .btn{border:none;border-radius:10px;padding:9px 12px;font-size:13.5px;font-weight:600;cursor:pointer;text-align:center}
 .btn.p{background:var(--accent);color:#fff} .btn.p:hover{background:var(--accent-d)}

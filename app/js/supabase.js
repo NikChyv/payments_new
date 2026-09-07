@@ -23,6 +23,9 @@ export function toRow(it) {
     client_id: it.client_id || null,
     auto_created: !!it.autoCreated,
     created_by_staff: it.createdByStaff || null,
+    // документы бухгалтера живут отдельно от files: те — счёт от клиента,
+    // и их первый элемент зеркалится в file_url, который читают рассылки
+    staff_files: Array.isArray(it.staffFiles) ? it.staffFiles : [],
   };
 }
 
@@ -40,6 +43,7 @@ export function fromRow(r) {
     created: r.created_at, client_id: r.client_id || null,
     autoCreated: !!r.auto_created,
     createdByStaff: r.created_by_staff || null,
+    staffFiles: Array.isArray(r.staff_files) ? r.staff_files : [],
   };
 }
 

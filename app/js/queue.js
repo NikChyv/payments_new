@@ -1,6 +1,6 @@
 import { state } from './state.js';
 import { daysBetween, addDays, addMonths, fmtDate, fmtMoney, todayStr } from './dates.js';
-import { save, removeRemote } from './supabase.js';
+import { save, removeRemote, uploadFiles, updatePaymentRemote } from './supabase.js';
 import { esc, toast, setText, genId } from './utils.js';
 
 // экспортируются: те же подписи идут в выгрузку Excel (export.js)
@@ -116,6 +116,15 @@ export function fileBadges(it) {
   ).join("");
 }
 
+// Документы бухгалтера — отдельным значком и другой иконкой: в одной строке
+// рядом лежат счёт ОТ клиента и платёжка ДЛЯ него, и путать их нельзя.
+export function staffFileBadges(it) {
+  return (it.staffFiles || []).map(f => f.url
+    ? `<a class="badge b-doc" href="${esc(f.url)}" target="_blank" rel="noopener" title="Платёжный документ">📄 ${esc(f.name || "документ")}</a>`
+    : `<span class="badge b-doc">📄 ${esc(f.name || "документ")}</span>`
+  ).join("");
+}
+
 function rowHtml(it) {
   const u = urgency(it);
   const dueBadge  = u.cls ? `<span class="badge ${u.cls}">${u.lbl}</span>` : "";
@@ -124,7 +133,7 @@ function rowHtml(it) {
   let receiptBadge = "";
   if (it.needReceipt && it.status !== "sent") {
     receiptBadge = it.status === "paid"
-      ? '<span class="badge b-due-amber">📄 отправить документ</span>'
+      ? '<span class="badge b-due-amber">📄 приложить документ</span>'
       : '<span class="badge b-rec">нужен документ</span>';
   }
 
@@ -134,7 +143,13 @@ function rowHtml(it) {
   else if (it.status === "in_progress")
     acts = _btn("ok","pay","Отметить оплаченным") + _btn("soft","back","↩ Вернуть в «новые»");
   else if (it.status === "paid")
-    acts = (it.needReceipt ? _btn("p","send","Документ отправлен клиенту") : _btn("soft","send","Закрыть"))
+    // Раньше здесь была кнопка «Документ отправлен клиентом» — она означала
+    // честное слово бухгалтера, а файл уходил в личный чат. Теперь главное
+    // действие — приложить сам документ: клиент получит его в Telegram и
+    // сможет переслать поставщику. «Закрыть без файла» остаётся для случаев,
+    // когда документ отдали на бумаге или лично.
+    acts = (it.needReceipt ? _btn("p","attach","📄 Приложить документ") : _btn("soft","send","Закрыть"))
+         + (it.needReceipt ? _btn("soft","send","Закрыть без файла") : "")
          + _btn("soft","unpay","↩ Отменить оплату");
   else if (it.status === "sent")
     acts = '<span class="badge b-st-sent" style="text-align:center;padding:9px">✓ Готово</span>'
@@ -157,7 +172,7 @@ function rowHtml(it) {
         (it.requisites ? `<span>${esc(it.requisites)}</span>` : "") +
         (it.purpose    ? `<span>${esc(it.purpose)}</span>` : "") +
       `</div>` +
-      `<div class="badges"><span class="badge ${stCls[it.status]}">${stLbl[it.status]}</span>${dueBadge}${recBadge}${receiptBadge}${fileBadge}</div>` +
+      `<div class="badges"><span class="badge ${stCls[it.status]}">${stLbl[it.status]}</span>${dueBadge}${recBadge}${receiptBadge}${fileBadge}${staffFileBadges(it)}</div>` +
     `</div>` +
     `<div class="acts">${acts}</div>` +
   `</div>`;
@@ -176,6 +191,10 @@ export function onListClick(e) {
   if (!it) return;
   const act = b.getAttribute("data-act");
 
+  // Прикрепление документа — единственное действие с загрузкой файла, поэтому
+  // оно асинхронное и уходит своим путём, мимо общего save() внизу.
+  if (act === "attach") { attachDocument(it); return; }
+
   if (act === "take")   { it.status = "in_progress"; toast("Взято в работу"); }
   else if (act === "back")   { it.status = "new";         toast("Возвращено в «Новые»"); }
   else if (act === "pay")    { markPaid(it); }
@@ -193,6 +212,66 @@ export function onListClick(e) {
 
 function nextDueOf(it) {
   return it.recurrence === "weekly" ? addDays(it.due, 7) : addMonths(it.due, 1);
+}
+
+// Бухгалтер прикладывает платёжный документ для клиента.
+//
+// Пишем точечным update, а не общим save(): тот перезаписывает все заявки
+// разом, и уведомление о документе пришлось бы вылавливать среди десятка
+// холостых срабатываний вебхука. Здесь меняется ровно одна строка — значит
+// notify-client получит ровно одно событие и отправит файл клиенту.
+async function attachDocument(it) {
+  // Отменённый выбор файла событий не даёт, поэтому убрать поле «после диалога»
+  // нельзя — вместо этого держим в документе не больше одного: перед новым
+  // открытием сносим прошлое. Иначе каждый передуманный клик оставлял бы
+  // висеть ещё один элемент.
+  const old = document.getElementById("docPicker");
+  if (old) old.remove();
+
+  const input = document.createElement("input");
+  input.id = "docPicker";
+  input.type = "file";
+  input.multiple = true;
+  // те же типы, что принимает бакет: список живёт в supabase.js и в миграции
+  input.accept = ".jpg,.jpeg,.png,.heic,.heif,.webp,.pdf,.xlsx,.docx,.xls,.doc";
+  // Поле обязано быть в документе: по неприкреплённому элементу часть браузеров
+  // программный click просто игнорирует, и диалог не открывается.
+  input.style.display = "none";
+  document.body.appendChild(input);
+
+  input.onchange = async () => {
+    const chosen = input.files;
+    input.remove();
+    if (!chosen || !chosen.length) return;
+    toast("Загружаю документ…");
+
+    const uploaded = await uploadFiles(chosen);
+    // ни один файл не дошёл — причину uploadFiles уже показала, статус не трогаем:
+    // «документ отправлен» без документа это ровно то, от чего мы уходим
+    if (!uploaded.length) return;
+
+    const prev = Array.isArray(it.staffFiles) ? it.staffFiles : [];
+    it.staffFiles = prev.concat(uploaded);
+    it.status = "sent";
+
+    try {
+      await updatePaymentRemote(it);
+    } catch (e) {
+      console.error(e);
+      it.staffFiles = prev;          // откатываем локально, иначе экран соврёт
+      it.status = "paid";
+      toast("Не удалось сохранить документ — попробуйте ещё раз");
+      render();
+      return;
+    }
+
+    toast(uploaded.length === 1
+      ? "Документ отправлен клиенту в Telegram"
+      : `Отправлено документов: ${uploaded.length}`);
+    render();
+  };
+
+  input.click();
 }
 
 export function markPaid(it) {
