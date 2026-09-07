@@ -117,15 +117,93 @@ function rowHtmlClient(it) {
   `</div>`;
 }
 
+// ---------- Поиск и фильтр по своим платежам ----------
+
+// Три группы кнопок-фильтров. Ключи совпадают с data-clf в разметке.
+const CL_GROUPS = {
+  all:  ()   => true,
+  open: activeOpen,
+  done: (it) => it.status === "paid" || it.status === "sent",
+};
+
+// Ищем по получателю и реквизитам. Отдельного поля УНП нет — он лежит строкой
+// внутри реквизитов («УНП 191234567»), поэтому поиск по ним его и накрывает.
+// Назначение платежа в поиск намеренно не входит.
+function clMatch(it, q) {
+  if (!q) return true;
+  return (it.payee || "").toLowerCase().includes(q) ||
+         (it.requisites || "").toLowerCase().includes(q);
+}
+
+// Счётчики на кнопках считаем по ВСЕМ платежам клиента и намеренно не сужаем
+// строкой поиска: иначе цифры прыгали бы при каждой набранной букве. У
+// бухгалтера карточки-счётчики устроены так же.
+function syncClientTools(all) {
+  const box = document.getElementById("clientTools");
+  if (!box) return;
+  // На пустом кабинете искать нечего — панель только мешала бы.
+  box.classList.toggle("hidden", all.length === 0);
+  if (!all.length) return;
+
+  // Поллинг перерисовывает кабинет раз в 15 секунд; значение в поле трогаем,
+  // только если оно разошлось с состоянием, чтобы не сбить каретку при наборе.
+  const search = document.getElementById("clSearch");
+  if (search && search.value !== state.clQuery) search.value = state.clQuery;
+
+  box.querySelectorAll("button[data-clf]").forEach(btn => {
+    const f = btn.getAttribute("data-clf");
+    const on = state.clFilter === f;
+    btn.classList.toggle("on", on);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+    const cnt = btn.querySelector(".cnt");
+    if (cnt) cnt.textContent = all.filter(CL_GROUPS[f] || CL_GROUPS.all).length;
+  });
+}
+
+// Сброс поиска и фильтра. Нужен не только по кнопке в пустом списке: после
+// отправки новой заявки кабинет обещает «статус виден ниже», а под активным
+// поиском или фильтром «Оплаченные» свежая заявка не отрисовалась бы.
+export function resetClientFilter() {
+  state.clQuery  = "";
+  state.clFilter = "all";
+  const search = document.getElementById("clSearch");
+  if (search) search.value = "";
+}
+
 export function renderClient() {
   const list = document.getElementById("list");
-  const rows = state.items.slice().sort((a, b) => {
-    const ao = activeOpen(a) ? 0 : 1, bo = activeOpen(b) ? 0 : 1;
-    if (ao !== bo) return ao - bo;
-    return a.due < b.due ? -1 : a.due > b.due ? 1 : 0;
-  });
+  const all  = state.items;
+  syncClientTools(all);
+
+  const q = state.clQuery.trim().toLowerCase();
+  const inGroup = CL_GROUPS[state.clFilter] || CL_GROUPS.all;
+  // Фильтруем только на этапе рендера: state.items мутировать нельзя — кнопки
+  // «Повторить» и «Редактировать» ищут заявку именно в нём, а не в DOM.
+  const rows = all.filter(it => inGroup(it) && clMatch(it, q));
+
+  // Пока не ищут — привычный порядок: открытые сверху, внутри группы по сроку.
+  // Как только в поиске что-то ввели — свежие сверху: ищут обычно недавнее.
+  rows.sort(q
+    ? (a, b) => (a.due < b.due ? 1 : a.due > b.due ? -1 : 0)
+    : (a, b) => {
+        const ao = activeOpen(a) ? 0 : 1, bo = activeOpen(b) ? 0 : 1;
+        if (ao !== bo) return ao - bo;
+        return a.due < b.due ? -1 : a.due > b.due ? 1 : 0;
+      });
+
+  // Тихая подсказка: видно, что часть платежей скрыта фильтром, а не пропала.
+  const shown = document.getElementById("clShown");
+  if (shown) shown.textContent = rows.length < all.length
+    ? `Показано ${rows.length} из ${all.length}`
+    : "";
+
   if (rows.length === 0) {
-    list.innerHTML = '<div class="empty">Здесь появятся ваши платежи после отправки заявки.</div>';
+    // При активном фильтре обещание «здесь появятся ваши платежи» было бы
+    // враньём: платежи есть, просто не попали под условие.
+    list.innerHTML = (q || state.clFilter !== "all")
+      ? '<div class="empty">По этому запросу платежей нет.<br>' +
+        '<button class="linkbtn" id="clReset">Сбросить поиск и фильтр</button></div>'
+      : '<div class="empty">Здесь появятся ваши платежи после отправки заявки.</div>';
     return;
   }
   list.innerHTML = rows.map(rowHtmlClient).join("");

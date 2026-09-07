@@ -66,6 +66,25 @@
         <button class="ghost" id="clientRefresh">Обновить</button>
       </div>
       <p class="mylist-sub">Статус каждого поручения обновляется автоматически. Как только бухгалтер оплатит — вы сразу увидите ✅.</p>
+
+      <!-- Поиск и фильтр по своим платежам. Свои id, а не тулбар бухгалтера:
+           у того слушатели дёргают render() без проверки роли. Панель стоит
+           ВНЕ #list — его перезаписывает поллинг, и поле теряло бы фокус
+           прямо во время набора. Показывается из renderClient(). -->
+      <div class="cl-panel hidden" id="clientTools">
+        <label class="cl-search">
+          <span class="ico" aria-hidden="true">🔎</span>
+          <input type="search" id="clSearch" autocomplete="off"
+                 placeholder="Поиск: получатель, УНП, реквизиты"
+                 aria-label="Поиск по получателю и реквизитам">
+        </label>
+        <div class="cl-chips" id="clChips" role="group" aria-label="Фильтр по статусу">
+          <button type="button" class="cl-chip on" data-clf="all"  aria-pressed="true">Все <span class="cnt">0</span></button>
+          <button type="button" class="cl-chip"    data-clf="open" aria-pressed="false">Запланированные <span class="cnt">0</span></button>
+          <button type="button" class="cl-chip"    data-clf="done" aria-pressed="false">Оплаченные <span class="cnt">0</span></button>
+        </div>
+        <div class="cl-shown" id="clShown"></div>
+      </div>
     </div>
 
     <div id="list"></div>

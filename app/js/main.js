@@ -8,6 +8,7 @@ import { exportClientPayments } from './export.js';
 import { render, onListClick } from './queue.js';
 import {
   loadClientByToken, loadPaymentsByToken, submitPaymentByToken, editPaymentByToken, renderClient,
+  resetClientFilter,
 } from './client_view.js';
 
 // ---------- навигация ----------
@@ -248,6 +249,9 @@ async function onSubmit(e) {
     setTimeout(() => { ok.className = "ok-msg"; }, 6000);
     switchView("queue");
     await loadPaymentsByToken(state.TOKEN);
+    // Ниже обещаем «статус виден ниже» — под активным поиском или фильтром
+    // «Оплаченные» свежая заявка в список бы не попала, и обещание бы соврало.
+    resetClientFilter();
     renderClient();
     toast(wasEditing ? "Заявка обновлена" : "Заявка отправлена — статус виден ниже");
   } else {
@@ -299,6 +303,13 @@ async function init() {
   });
 
   document.getElementById("list").addEventListener("click", e => {
+    // сброс поиска/фильтра из пустого состояния клиентского кабинета
+    if (state.TOKEN && e.target.closest && e.target.closest("#clReset")) {
+      resetClientFilter();
+      renderClient();
+      return;
+    }
+
     const find = attr => {
       const b = e.target.closest && e.target.closest(`button[${attr}]`);
       if (!b) return null;
@@ -332,6 +343,23 @@ async function init() {
   });
 
   document.getElementById("payForm").addEventListener("submit", onSubmit);
+
+  // Поиск и фильтр в кабинете клиента. Отдельные элементы и отдельные
+  // слушатели: тулбар бухгалтера ниже перерисовывает очередь через render(),
+  // и клиент увидел бы чужие строки с кнопками «Взять в работу».
+  const clSearch = document.getElementById("clSearch");
+  if (clSearch) clSearch.addEventListener("input", e => {
+    state.clQuery = e.target.value;
+    renderClient();
+  });
+  const clChips = document.getElementById("clChips");
+  if (clChips) clChips.addEventListener("click", e => {
+    const btn = e.target.closest && e.target.closest("button[data-clf]");
+    if (!btn) return;
+    state.clFilter = btn.getAttribute("data-clf");
+    renderClient();
+  });
+
   document.getElementById("search").addEventListener("input", render);
   document.getElementById("fClient").addEventListener("change", render);
   document.getElementById("fStatus").addEventListener("change", render);
