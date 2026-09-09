@@ -123,6 +123,16 @@ async function cdp() {
 
 const server = await serve();
 const staffId = await ensureStaff();
+
+// --serve: не снимать ничего, просто держать стенд открытым для ручного прохода.
+// Учётка бухгалтера к этому моменту уже заведена, клиенты к ней привязаны.
+if (process.argv.includes("--serve")) {
+  console.log(`Стенд поднят. Ctrl+C чтобы остановить.\n`);
+  console.log(`  Кабинет клиента  http://localhost:${server.port}/app/?t=${TOKEN}`);
+  console.log(`  Очередь и вход   http://localhost:${server.port}/app/`);
+  console.log(`  Бухгалтер        ${STAFF.email} / ${STAFF.password}\n`);
+  await new Promise(() => {});
+}
 const profile = path.join(os.tmpdir(), "uicheck-chrome");
 const chrome = spawn(chromePath(), ["--headless=new", "--disable-gpu", "--no-sandbox",
   "--hide-scrollbars", `--remote-debugging-port=${CDP}`, `--user-data-dir=${profile}`, "about:blank"],
