@@ -6,15 +6,25 @@
 // не туда: прод-адрес из файла не исчезает.
 const LOCAL = location.hostname === "localhost" || location.hostname === "127.0.0.1";
 
-// Ключи ниже — публичные anon-ключи, им положено быть во фронте.
-// Локальный ключ у Supabase CLI одинаков у всех и секретом не является.
+// Ключи ниже публичные, им положено быть во фронте: сами по себе они ничего не
+// открывают, доступ решают RLS и проверки внутри RPC.
+//
+// Прод переведён на publishable-ключ новой схемы (sb_publishable_…) вместо
+// legacy anon-JWT. Причина не в удобстве: legacy-ключи выключаются целиком,
+// одной кнопкой в панели, — и это единственный способ убить утёкший
+// service_role, который три месяца пролежал в baseline-миграции публичного
+// репозитория (SECURITY.md, п. 5.2.1). Пока фронт ходит legacy-ключом,
+// выключить их нельзя.
+//
+// Локальный стек остаётся на своём anon-ключе: он одинаков у всех, работает
+// только против 127.0.0.1 и секретом не является.
 export const SUPABASE_URL = LOCAL
   ? "http://127.0.0.1:18321"
   : "https://gmvhphuabiyggfurfhmc.supabase.co";
 
 export const SUPABASE_KEY = LOCAL
   ? "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
-  : "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdtdmhwaHVhYml5Z2dmdXJmaG1jIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1Njg1NDEsImV4cCI6MjA5NjE0NDU0MX0.sTX7bZFXKRfkb9pPA8Pr_gHzHpYsaU4t5PYNRPeazWU";
+  : "sb_publishable_Vce6cWOwY9G4w-bt9cGsRw_h4YoFR-s";
 
 export const TABLE  = "payments";
 export const BUCKET = "files";
