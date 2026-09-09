@@ -95,9 +95,22 @@ const HELP =
 // ---------- сессии диалога ----------
 
 type Draft = Record<string, unknown>;
+type Session = { step: string; draft: Draft; updated_at?: string };
+
 async function getSession(tgId: number) {
-  const { data } = await sb.from("tg_sessions").select("step,draft").eq("telegram_id", tgId).maybeSingle();
-  return data as { step: string; draft: Draft } | null;
+  const { data } = await sb.from("tg_sessions").select("step,draft,updated_at").eq("telegram_id", tgId).maybeSingle();
+  return data as Session | null;
+}
+
+// Режим ответа на вопрос бухгалтера остаётся открытым после отправки: человек
+// почти всегда дописывает («вот счёт» + файл следом), и терять второе сообщение
+// нельзя. Но висеть вечно он не должен — иначе завтрашнее «спасибо» уедет в
+// переписку по позавчерашней заявке. Через 12 часов режим сам закрывается.
+const REPLY_TTL = 12 * 3600 * 1000;
+function replyAlive(s: Session | null) {
+  if (!s || s.step !== "reply") return false;
+  const t = Date.parse(String(s.updated_at ?? ""));
+  return !isFinite(t) || (Date.now() - t) < REPLY_TTL;
 }
 async function setSession(tgId: number, step: string, draft: Draft) {
   await sb.from("tg_sessions").upsert({ telegram_id: tgId, step, draft, updated_at: new Date().toISOString() });
@@ -289,6 +302,37 @@ async function routeText(chatId: number, tgId: number, step: string, draft: Draf
 
 // ---------- финал: создание поручения ----------
 
+// ---------- ответ на вопрос бухгалтера ----------
+
+// Ответ уходит через тот же reply_by_token, что и кабинет: лимит частоты,
+// проверка токена и запись файла во вложения заявки — всё уже в БД, дублировать
+// это в боте не нужно. Сессию НЕ закрываем: человек почти всегда дописывает
+// следом («вот счёт» → файл), и второе сообщение терять нельзя.
+async function sendReply(
+  chatId: number, tgId: number, d: Draft, text: string, file: {url: string; name: string} | null,
+) {
+  const { error } = await sb.rpc("reply_by_token", {
+    p_token: String(d.token ?? ""),
+    p_id:    String(d.pid ?? ""),
+    p_text:  text ?? "",
+    p_files: file ? [file] : [],
+  });
+
+  if (error) {
+    console.error(error);
+    // показываем настоящую причину (закрытая заявка, лимит частоты и т.п.)
+    const why = (error as {message?: string}).message || "";
+    await send(chatId, why
+      ? `Не получилось отправить: ${why}`
+      : "Не получилось отправить ответ. Попробуйте ещё раз.");
+    return;
+  }
+
+  await setSession(tgId, "reply", d);   // продлеваем режим ответа
+  await send(chatId, "Передал бухгалтеру ✅\n\n" +
+    "Можно дослать ещё файл или сообщение по этой заявке. Закончить — /cancel");
+}
+
 async function submit(chatId: number, tgId: number, token: string, d: Draft) {
   const { error } = await sb.rpc("submit_payment", {
     p_token:        token,
@@ -321,13 +365,21 @@ async function handleMessage(msg: any) {
   const chatId = msg.chat.id as number;
   const tgId = chatId;
 
-  // вложение (фото/документ) — только на шаге file
+  // вложение (фото/документ) — на шаге file (новая заявка) или reply (ответ)
   if (msg.photo || msg.document) {
     const list = await getClients(tgId);
     if (list.length === 0) { await send(chatId, NOT_BOUND); return; }
-    if (list.length > 1) { await send(chatId, manyFirms(list)); return; }
     const session = await getSession(tgId);
-    if (!session || session.step !== "file") { await send(chatId, "Чтобы создать заявку: /new"); return; }
+    const answering = replyAlive(session);
+
+    // Ответ привязан к конкретной заявке, поэтому фирма известна однозначно —
+    // проверку «несколько фирм» здесь применять нельзя, иначе человек с двумя
+    // компаниями не сможет прислать счёт.
+    if (!answering) {
+      if (list.length > 1) { await send(chatId, manyFirms(list)); return; }
+      if (!session || session.step !== "file") { await send(chatId, "Чтобы создать заявку: /new"); return; }
+    }
+
     let up: UploadResult;
     if (msg.document) {
       up = await uploadTelegramFile(
@@ -343,13 +395,24 @@ async function handleMessage(msg: any) {
       await send(chatId, {
         type: "Такой файл не принимается. Пришлите фото счёта, PDF или документ Word/Excel.",
         size: "Файл больше 10 МБ. Сфотографируйте счёт с меньшим качеством или пришлите PDF.",
-        fail: "Файл не загрузился. Попробуйте ещё раз или нажмите «Пропустить».",
-      }[up.reason], KB.skip);
+        fail: answering
+          ? "Файл не загрузился. Попробуйте ещё раз."
+          : "Файл не загрузился. Попробуйте ещё раз или нажмите «Пропустить».",
+      }[up.reason], answering ? undefined : KB.skip);
       return;
     }
-    session.draft.file_url = up.url; session.draft.file_name = up.name;
-    await setSession(tgId, "confirm", session.draft);
-    await showConfirm(chatId, session.draft);
+
+    // Подпись к файлу — это и есть текст ответа: «вот счёт С-2211» люди пишут
+    // прямо в подписи, отдельным сообщением слать не будут.
+    if (answering) {
+      await sendReply(chatId, tgId, session!.draft,
+        String(msg.caption ?? "").trim(), { url: up.url, name: up.name });
+      return;
+    }
+
+    session!.draft.file_url = up.url; session!.draft.file_name = up.name;
+    await setSession(tgId, "confirm", session!.draft);
+    await showConfirm(chatId, session!.draft);
     return;
   }
 
@@ -413,6 +476,24 @@ async function handleMessage(msg: any) {
     return;
   }
 
+  // Ответ на вопрос бухгалтера. Стоит ДО проверки «несколько фирм»: заявка
+  // указана в самой кнопке «Ответить», поэтому фирма известна однозначно —
+  // в отличие от /new, где выбрать её не из чего.
+  const answering = await getSession(tgId);
+  if (replyAlive(answering)) {
+    if (text === "/cancel") {
+      await clearSession(tgId);
+      await send(chatId, "Хорошо, больше ничего по этой заявке не передаю.");
+      return;
+    }
+    if (!text.startsWith("/")) {
+      await sendReply(chatId, tgId, answering!.draft, text, null);
+      return;
+    }
+    // остальные команды выводят из режима ответа и работают как обычно
+    await clearSession(tgId);
+  }
+
   // Всё остальное — диалог заведения заявки, он требует одной конкретной фирмы.
   if (list.length > 1) { await send(chatId, manyFirms(list)); return; }
 
@@ -441,10 +522,38 @@ async function handleCallback(cq: any) {
   const data = cq.data as string;
   await answerCallback(cq.id);
 
+  const list = await getClients(tgId);
+
+  // «✍️ Ответить» под вопросом бухгалтера.
+  //
+  // Разбирается ПЕРВОЙ и до всех проверок ниже. Двух причин достаточно:
+  // проверка «несколько фирм» здесь неуместна (заявка названа в самой кнопке),
+  // а проверка «сессия не найдена» отсекла бы кнопку под вчерашним вопросом —
+  // именно тогда по ней и жмут.
+  //
+  // Заявку ищем сами и сверяем с фирмами этого чата: бот ходит в базу под
+  // service_role, RLS его не остановит, так что чужой id из подделанного
+  // callback_data пустил бы человека в чужую переписку.
+  if (data.startsWith("reply:")) {
+    if (list.length === 0) { await send(chatId, NOT_BOUND); return; }
+    const pid = data.slice(6);
+    const { data: pay } = await sb
+      .from("payments").select("id,client_id,payee,status").eq("id", pid).maybeSingle();
+    const own = pay ? list.find((c) => c.id === pay.client_id) : null;
+
+    if (!pay || !own) { await send(chatId, "Заявка не найдена. Напишите бухгалтеру напрямую."); return; }
+    if (pay.status === "sent") { await send(chatId, "Эта заявка уже закрыта — ответить по ней нельзя."); return; }
+
+    await setSession(tgId, "reply", { pid: pay.id, token: own.token, payee: pay.payee });
+    await send(chatId,
+      `✍️ Напишите ответ по заявке «${pay.payee}» — текстом, файлом или тем и другим сразу.\n\n` +
+      "Фото или PDF счёта можно прислать прямо сюда. Передумали — /cancel");
+    return;
+  }
+
   // Кнопка могла прилететь из старого сообщения — например, человек начал
   // заявку одной фирмой, а потом привязал вторую. Заявку от имени наугад
   // выбранной фирмы отправлять нельзя, поэтому здесь та же проверка.
-  const list = await getClients(tgId);
   if (list.length > 1) { await clearSession(tgId); await send(chatId, manyFirms(list)); return; }
   const client = list[0];
   const session = await getSession(tgId);

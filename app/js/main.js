@@ -8,8 +8,9 @@ import { exportClientPayments } from './export.js';
 import { render, onListClick } from './queue.js';
 import {
   loadClientByToken, loadPaymentsByToken, submitPaymentByToken, editPaymentByToken, renderClient,
-  resetClientFilter,
+  resetClientFilter, openClientReply, initClientReply,
 } from './client_view.js';
+import { initThreadDialog } from './thread.js';
 
 // ---------- навигация ----------
 
@@ -281,6 +282,10 @@ async function init() {
   if (dueEl) dueEl.value = todayStr();
 
   // ----- слушатели -----
+  // Окна переписки статичны, а заявка внутри меняется — вешаем по одному разу.
+  initThreadDialog();
+  initClientReply();
+
   document.getElementById("tabQueue").addEventListener("click", () => {
     switchView("queue");
     if (!state.TOKEN && useRemote) load().then(render);
@@ -315,6 +320,11 @@ async function init() {
       if (!b) return null;
       return state.items.find(x => String(x.id) === b.getAttribute(attr)) || null;
     };
+
+    // клиент отвечает на вопрос бухгалтера — окно вне #list, чтобы поллинг
+    // не стирал набранный текст
+    const rep = find("data-clreply");
+    if (rep) { openClientReply(rep); return; }
 
     const dup = find("data-dup");
     if (dup) { fillFormForDuplicate(dup); return; }

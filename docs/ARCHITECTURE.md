@@ -54,11 +54,12 @@
 | `js/auth.js` | вход/выход сотрудника, определение роли из `staff` |
 | `js/clients.js` | экран «Клиенты»: список, добавление, ссылки, ротация токена |
 | `js/queue.js` | очередь бухгалтера: рендер, счётчики, смена статусов |
-| `js/client_view.js` | клиентский режим: RPC по токену, рендер своих платежей |
+| `js/client_view.js` | клиентский режим: RPC по токену, рендер своих платежей, окно ответа |
+| `js/thread.js` | переписка по заявке: состояние, шаблоны вопросов, окно у бухгалтера |
 | `js/main.js` | оркестратор: init, навигация, поллинг (15с), submit/edit |
 | `js/dates.js`, `js/utils.js` | даты (пояс Минска) и мелкие хелперы |
 
-Граф зависимостей без циклов: `config/dates/utils/state → supabase → clients/queue/client_view/auth → main`.
+Граф зависимостей без циклов: `config/dates/utils/state → supabase → thread → clients/queue/client_view/auth → main`.
 `main.js` — единственный, кто переключает экраны.
 
 > В корне репозитория лежат легаси `index.html` (прод v1.4) и `app.html`
@@ -73,6 +74,7 @@
 | `staff` | сотрудники; `id` = `auth.users.id`, флаг `is_admin` |
 | `tg_sessions` | состояние пошагового диалога бота (шаг + черновик jsonb) |
 | `payments_audit` | журнал: создание/удаление/смена статуса, кто и когда |
+| — | переписка по заявке лежит в `payments.thread` (jsonb), отдельной таблицы нет: `list_payments_by_token` возвращает `SETOF payments`, и она доезжает клиенту сама |
 | `rpc_rate_limit` | счётчики частоты вызовов anon-RPC |
 
 **RPC — единственный путь для anon** (прямой доступ к таблицам отозван):
@@ -83,6 +85,8 @@
 | `list_payments_by_token` | anon | платежи только этого клиента |
 | `submit_payment` | anon | создать заявку (лимит 10/мин, 60/час) |
 | `edit_payment_by_token` | anon | правка своей заявки, только `status='new'` (20/мин) |
+| `reply_by_token` | anon | ответ на вопрос бухгалтера; файлы уходят во вложения заявки (20/мин) |
+| `post_staff_message` | сотрудник | вопрос или напоминание клиенту; автор берётся из JWT |
 | `rotate_client_token` | admin | перевыпуск ссылки, старый токен мёртв |
 | `is_admin` | внутр. | проверка роли для RLS-политик |
 | `check_rate_limit` | внутр. | учёт частоты, бросает исключение при превышении |
@@ -93,8 +97,8 @@
 | Функция | Триггер | Verify JWT | Что делает |
 |---------|---------|-----------|------------|
 | `notify-payment` | DB Webhook: INSERT `payments` | вкл | «новая заявка» бухгалтерам |
-| `notify-client` | DB Webhook: UPDATE `payments` | вкл | клиенту «оплачено»/«документ», ровно один раз (флаги) |
-| `telegram-bot` | Telegram webhook | **выкл** | `/start`, `/payments`, `/new` (диалог), `/cancel`, `/myid` |
+| `notify-client` | DB Webhook: UPDATE `payments` | вкл | клиенту «оплачено»/«документ», ровно один раз (флаги); переписка по заявке в обе стороны |
+| `telegram-bot` | Telegram webhook | **выкл** | `/start`, `/payments`, `/new` (диалог), `/cancel`, `/myid`, ответ на вопрос бухгалтера |
 
 `telegram-bot` защищён секретным заголовком `TG_WEBHOOK_SECRET`, поэтому JWT
 у него выключен (Telegram его не пришлёт).
@@ -125,6 +129,14 @@ Telegram бухгалтерам. Триггер аудита пишет `INSERT`
 (шлёт только при первом переходе, затем ставит флаг) → клиенту в бот.
 Аудит фиксирует переход `old_status → new_status`.
 
+**Бухгалтеру не хватает данных**
+`post_staff_message` (вопрос или напоминание) → запись в `payments.thread` →
+DB Webhook → `notify-client` → клиенту в бот с кнопкой «Ответить» и в кабинет.
+Ответ идёт `reply_by_token` (кабинет или бот) → сообщение в ту же переписку,
+файл — во вложения заявки → `notify-client` → в чат бухгалтеров. Счётчики
+`client_thread_notified` / `staff_thread_notified` — индексы в переписке, не
+дошло — допошлём при следующем касании заявки.
+
 **Утренний список**
 `pg_cron` в 05:30 UTC (8:30 Минск) → `send_daily_reminder()` → `net.http_post`
 → Telegram бухгалтерам: платежи на сегодня со ссылками на файлы.
@@ -134,9 +146,9 @@ Telegram бухгалтерам. Триггер аудита пишет `INSERT`
 ```
 supabase/
   config.toml            конфиг локального стека (порты 483xx)
-  migrations/            схема БД по порядку (baseline + 6 миграций)
+  migrations/            схема БД по порядку (baseline + 18 миграций)
   functions/             исходники Edge Functions
-  tests/                 pgTAP: 24 теста
+  tests/                 pgTAP: 190 тестов в 14 файлах
   seed.sql               демо-данные (только локально)
   daily_reminder.sql     утренняя рассылка (токен подставляется в проде)
 .github/workflows/

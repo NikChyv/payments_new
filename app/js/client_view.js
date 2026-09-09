@@ -1,8 +1,9 @@
-import { sb, useRemote, fromRow } from './supabase.js';
+import { sb, useRemote, fromRow, uploadFiles } from './supabase.js';
 import { state } from './state.js';
-import { esc } from './utils.js';
+import { esc, toast } from './utils.js';
 import { fmtDate, fmtMoney } from './dates.js';
 import { fileBadges, staffFileBadges } from './queue.js';
+import { threadState } from './thread.js';
 
 const recLbl = {once:"Разовый", weekly:"Еженедельно", monthly:"Ежемесячно"};
 
@@ -61,11 +62,29 @@ export async function editPaymentByToken(token, id, payee, amount, requisites, d
   return res.data;
 }
 
+// Ответ клиента на вопрос бухгалтера. Файлы уходят тем же списком, что и в
+// заявке: RPC положит их во вложения платежа, а не только в переписку — счёт
+// нужен бухгалтеру там, где он платит.
+export async function replyByToken(token, id, text, files) {
+  const res = await sb.rpc("reply_by_token", {
+    p_token: token,
+    p_id:    id,
+    p_text:  text || "",
+    p_files: files || [],
+  });
+  if (res.error) throw res.error;
+  return res.data;
+}
+
 // ---------- Рендер клиентского списка ----------
 
 function activeOpen(it) { return it.status === "new" || it.status === "in_progress"; }
 
 function clStatusInfo(it) {
+  // Вопрос бухгалтера важнее стадии: пока на него не ответили, заявка стоит
+  // именно из-за этого, и человек должен видеть причину, а не «ждёт оплаты».
+  if (activeOpen(it) && threadState(it) === "waiting")
+    return {cls:"s-ask", icon:"❓", text:"Бухгалтер ждёт вашего ответа"};
   if (it.status === "in_progress") return {cls:"s-prog", icon:"⏳", text:"Бухгалтер взял в работу"};
   if (it.status === "paid")        return {cls:"s-paid", icon:"✅", text: it.needReceipt ? "Оплачено, готовим документ" : "Оплачено"};
   if (it.status === "sent")        return {cls:"s-sent", icon:"✅", text: it.needReceipt ? "Оплачено, документ отправлен" : "Оплачено"};
@@ -91,6 +110,37 @@ export function clSteps(it) {
   return `<div class="steps">${parts.join("")}</div>`;
 }
 
+// Переписка на карточке заявки.
+//
+// Само поле ответа живёт НЕ здесь, а в окне за пределами #list: список
+// перерисовывается поллингом раз в 15 секунд, и текст, который человек набирает,
+// вместе с кареткой просто исчез бы на середине слова.
+function clThreadHtml(it) {
+  const list = it.thread || [];
+  if (!list.length) return "";
+
+  const waiting = threadState(it) === "waiting" && it.status !== "sent";
+  const msgs = list.map(m => {
+    const files = (m.files || [])
+      .filter(f => f && f.url)
+      .map(f => `<a class="th-file" href="${esc(f.url)}" target="_blank" rel="noopener">📎 ${esc(f.name || "файл")}</a>`)
+      .join("");
+    return `<div class="th-msg ${m.who === "client" ? "cl" : "st"}">` +
+      `<div class="th-who">${m.who === "client" ? "Вы" : "Бухгалтер"}</div>` +
+      `<div class="th-text">${esc(m.text || "")}</div>` +
+      (files ? `<div class="th-files">${files}</div>` : "") +
+    `</div>`;
+  }).join("");
+
+  return `<div class="cl-thread${waiting ? " ask" : ""}">` +
+    (waiting ? '<div class="cl-thread-h">❓ Бухгалтеру не хватает данных</div>' : "") +
+    msgs +
+    (waiting
+      ? `<button class="cl-answer" data-clreply="${esc(it.id)}">✍️ Ответить бухгалтеру</button>`
+      : "") +
+  `</div>`;
+}
+
 function rowHtmlClient(it) {
   const done = it.status === "paid" || it.status === "sent";
   const s = clStatusInfo(it);
@@ -113,8 +163,80 @@ function rowHtmlClient(it) {
       `</div>` +
       `<div class="cl-status"><span class="cl-now ${s.cls}">${s.icon} ${s.text}</span>${recBadge}${fileBadge}${staffFileBadges(it)}${editBtn}${dupBtn}</div>` +
       clSteps(it) +
+      clThreadHtml(it) +
     `</div>` +
   `</div>`;
+}
+
+// ---------- Окно ответа клиента ----------
+
+// Окно, а не поле прямо в карточке: #list переписывается поллингом каждые 15
+// секунд, и набранный текст исчезал бы вместе с кареткой.
+let replyFor = null;
+
+export function openClientReply(it) {
+  replyFor = it;
+  const list = it.thread || [];
+  const last = list[list.length - 1] || {};
+
+  document.getElementById("clrPayee").textContent = it.payee || "";
+  document.getElementById("clrQuestion").textContent = last.text || "";
+  document.getElementById("clrText").value = "";
+  const f = document.getElementById("clrFile");
+  if (f) f.value = "";
+  document.getElementById("clrBox").classList.remove("hidden");
+  setTimeout(() => document.getElementById("clrText").focus(), 30);
+}
+
+export function closeClientReply() {
+  document.getElementById("clrBox").classList.add("hidden");
+  replyFor = null;
+}
+
+async function sendClientReply() {
+  const it = replyFor;
+  if (!it) return;
+  const btn = document.getElementById("clrSend");
+  const text = document.getElementById("clrText").value.trim();
+  const input = document.getElementById("clrFile");
+  const picked = input && input.files ? input.files : [];
+
+  if (!text && !picked.length) { toast("Напишите ответ или приложите файл"); return; }
+
+  btn.disabled = true;
+  try {
+    // файл грузим до RPC: она принимает уже готовые ссылки
+    const files = picked.length ? await uploadFiles(picked) : [];
+    if (picked.length && !files.length && !text) {
+      toast("Файл не загрузился — попробуйте ещё раз");
+      return;
+    }
+    await replyByToken(state.TOKEN, it.id, text, files);
+    closeClientReply();
+    await loadPaymentsByToken(state.TOKEN);
+    renderClient();
+    toast("Ответ отправлен бухгалтеру");
+  } catch (e) {
+    console.error(e);
+    toast(e && e.message ? `Не отправилось: ${e.message}` : "Не отправилось — попробуйте ещё раз");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+export function initClientReply() {
+  const box = document.getElementById("clrBox");
+  if (!box) return;
+  box.addEventListener("click", e => {
+    if (e.target === box) { closeClientReply(); return; }
+    const b = e.target.closest && e.target.closest("button[data-clr]");
+    if (!b) return;
+    if (b.getAttribute("data-clr") === "close") closeClientReply();
+    else sendClientReply();
+  });
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && !box.classList.contains("hidden")) closeClientReply();
+  });
 }
 
 // ---------- Поиск и фильтр по своим платежам ----------

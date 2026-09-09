@@ -26,6 +26,11 @@ export function toRow(it) {
     // документы бухгалтера живут отдельно от files: те — счёт от клиента,
     // и их первый элемент зеркалится в file_url, который читают рассылки
     staff_files: Array.isArray(it.staffFiles) ? it.staffFiles : [],
+    // thread здесь НАМЕРЕННО нет. save() ниже перезаписывает все заявки разом
+    // из локального состояния, а в переписку пишет и клиент — из кабинета и из
+    // бота. Попади она сюда, ответ, пришедший между 15-секундными опросами, был
+    // бы молча затёрт следующим нажатием «Взять в работу». Переписка меняется
+    // только дописыванием на сервере: post_staff_message / reply_by_token.
   };
 }
 
@@ -44,7 +49,28 @@ export function fromRow(r) {
     autoCreated: !!r.auto_created,
     createdByStaff: r.created_by_staff || null,
     staffFiles: Array.isArray(r.staff_files) ? r.staff_files : [],
+    thread: Array.isArray(r.thread) ? r.thread : [],
   };
+}
+
+// Сообщение бухгалтера клиенту. Отдельной RPC, а не общим сохранением: имя
+// автора функция берёт из JWT (подписаться чужим именем нельзя), а запись идёт
+// дописыванием — иначе параллельный ответ клиента был бы затёрт.
+export async function postStaffMessage(it, text, kind) {
+  if (!useRemote) {
+    // локальный режим без Supabase — только чтобы демо не разваливалось
+    it.thread = (it.thread || []).concat([{
+      id: genId(), who: "staff", kind: kind || "question", text,
+      author: "Бухгалтер", files: [], at: new Date().toISOString(),
+    }]);
+    _saveLocal();
+    return;
+  }
+  const res = await sb.rpc("post_staff_message", {
+    p_id: it.id, p_text: text, p_kind: kind || "question",
+  });
+  if (res.error) throw res.error;
+  it.thread = (it.thread || []).concat([res.data]);
 }
 
 export async function load() {

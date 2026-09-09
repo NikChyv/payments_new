@@ -1,7 +1,8 @@
 import { state } from './state.js';
 import { daysBetween, addDays, addMonths, fmtDate, fmtMoney, todayStr } from './dates.js';
-import { save, removeRemote, uploadFiles, updatePaymentRemote } from './supabase.js';
+import { save, removeRemote, uploadFiles, updatePaymentRemote, postStaffMessage } from './supabase.js';
 import { esc, toast, setText, genId } from './utils.js';
+import { threadState, openThread } from './thread.js';
 
 // экспортируются: те же подписи идут в выгрузку Excel (export.js)
 export const recLbl = {once:"Разовый", weekly:"Еженедельно", monthly:"Ежемесячно"};
@@ -23,9 +24,11 @@ function urgency(it) {
 }
 
 export function computeCounts() {
-  let o = 0, today = 0, week = 0, prog = 0, doc = 0;
+  let o = 0, today = 0, week = 0, prog = 0, doc = 0, wait = 0;
   state.items.forEach(it => {
     if (it.status === "paid" && it.needReceipt) doc++;
+    // «Ждут ответа» считаем по открытым заявкам: по закрытой ждать нечего
+    if (activeOpen(it) && threadState(it) === "waiting") wait++;
     if (!activeOpen(it)) return;
     const d = daysBetween(it.due);
     if (d < 0) o++;
@@ -35,6 +38,7 @@ export function computeCounts() {
   });
   setText("cOverdue", o); setText("cToday", today);
   setText("cWeek", week); setText("cProg", prog); setText("cDoc", doc);
+  setText("cWait", wait);
 
   const b = document.getElementById("banner");
   if (o + today > 0) {
@@ -84,6 +88,7 @@ export function render() {
       if (state.quickFilter === "today"     && !(activeOpen(it) && d === 0))   return false;
       if (state.quickFilter === "week"      && !(activeOpen(it) && d > 0 && d <= 7)) return false;
       if (state.quickFilter === "prog"      && it.status !== "in_progress")    return false;
+      if (state.quickFilter === "waiting"   && !(activeOpen(it) && threadState(it) === "waiting")) return false;
       if (state.quickFilter === "await_doc" && !(it.status === "paid" && it.needReceipt)) return false;
     }
     if (q) {
@@ -137,6 +142,13 @@ function rowHtml(it) {
       : '<span class="badge b-rec">нужен документ</span>';
   }
 
+  // Метка переписки. «Ждём ответ» намеренно спокойная: заявка и так уже
+  // подсвечена сроком, а второй кричащий цвет в строке только мешает.
+  const ts = threadState(it);
+  const threadBadge =
+    ts === "waiting"  ? '<span class="badge b-wait">⏸ ждём ответ клиента</span>' :
+    ts === "answered" ? '<span class="badge b-answer">💬 клиент ответил</span>' : "";
+
   let acts = "";
   if (it.status === "new")
     acts = _btn("p","take","Взять в работу") + _btn("ok","pay","Отметить оплаченным");
@@ -157,7 +169,14 @@ function rowHtml(it) {
   // Второстепенные действия — узкой строкой иконок. Пять одинаковых кнопок в
   // столбик не давали иерархии: смена статуса это работа, а правка и дубликат
   // нужны изредка, и выглядеть они должны спокойнее.
+  // Пока ждём ответа — напомнить можно одним нажатием, не открывая переписку:
+  // это самое частое, что бухгалтер делает с такой заявкой.
+  if (ts === "waiting") acts += _btn("soft", "remind", "🔔 Напомнить");
+
+  const n = (it.thread || []).length;
   acts += `<div class="acts-more">` +
+    `<button class="btn mini${ts === "answered" ? " hot" : ""}" data-act="thread" ` +
+      `title="Переписка по заявке" aria-label="Переписка">💬${n ? " " + n : ""}</button>` +
     `<button class="btn mini" data-edit="${esc(it.id)}" title="Редактировать заявку" aria-label="Редактировать">✏️</button>` +
     `<button class="btn mini" data-dup="${esc(it.id)}" title="Создать такую же заявку" aria-label="Дублировать">⧉</button>` +
     `<button class="btn mini danger" data-act="del" title="Удалить заявку" aria-label="Удалить">🗑</button>` +
@@ -172,7 +191,7 @@ function rowHtml(it) {
         (it.requisites ? `<span>${esc(it.requisites)}</span>` : "") +
         (it.purpose    ? `<span>${esc(it.purpose)}</span>` : "") +
       `</div>` +
-      `<div class="badges"><span class="badge ${stCls[it.status]}">${stLbl[it.status]}</span>${dueBadge}${recBadge}${receiptBadge}${fileBadge}${staffFileBadges(it)}</div>` +
+      `<div class="badges"><span class="badge ${stCls[it.status]}">${stLbl[it.status]}</span>${dueBadge}${threadBadge}${recBadge}${receiptBadge}${fileBadge}${staffFileBadges(it)}</div>` +
     `</div>` +
     `<div class="acts">${acts}</div>` +
   `</div>`;
@@ -195,6 +214,11 @@ export function onListClick(e) {
   // оно асинхронное и уходит своим путём, мимо общего save() внизу.
   if (act === "attach") { attachDocument(it); return; }
 
+  // Переписка тоже уходит мимо save(): она дописывается на сервере отдельной
+  // RPC, а save() перезаписал бы все заявки разом сталым состоянием вкладки.
+  if (act === "thread") { openThread(it, render); return; }
+  if (act === "remind") { remindClient(it); return; }
+
   if (act === "take")   { it.status = "in_progress"; toast("Взято в работу"); }
   else if (act === "back")   { it.status = "new";         toast("Возвращено в «Новые»"); }
   else if (act === "pay")    { markPaid(it); }
@@ -212,6 +236,28 @@ export function onListClick(e) {
 
 function nextDueOf(it) {
   return it.recurrence === "weekly" ? addDays(it.due, 7) : addMonths(it.due, 1);
+}
+
+// Напоминание в один клик из строки очереди.
+//
+// Два напоминания подряд не отправляем: клиент получит их в Telegram
+// одинаковыми сообщениями и решит, что бот сломался. Хочется дожать — есть
+// переписка, там можно написать словами.
+async function remindClient(it) {
+  const list = it.thread || [];
+  const last = list[list.length - 1];
+  if (last && last.kind === "reminder") {
+    toast("Напоминание уже отправлено — подождите ответа");
+    return;
+  }
+  try {
+    await postStaffMessage(it, "Напоминаю: жду вашего ответа по этой заявке.", "reminder");
+    toast("Напомнили клиенту");
+    render();
+  } catch (e) {
+    console.error(e);
+    toast(e && e.message ? `Не отправилось: ${e.message}` : "Не отправилось — попробуйте ещё раз");
+  }
 }
 
 // Бухгалтер прикладывает платёжный документ для клиента.

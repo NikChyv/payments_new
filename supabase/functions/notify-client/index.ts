@@ -14,6 +14,17 @@ const sb = createClient(
 
 const months = ["янв","фев","мар","апр","мая","июн","июл","авг","сен","окт","ноя","дек"];
 
+// Одно сообщение переписки по заявке (payments.thread). Форму задаёт БД —
+// post_staff_message и reply_by_token, миграция 20260909000001.
+type ThreadMsg = {
+  who?: string;                 // 'staff' | 'client'
+  kind?: string;                // 'question' | 'reminder' | 'reply'
+  text?: string;
+  author?: string;
+  files?: Array<{ url?: string; name?: string }>;
+  at?: string;
+};
+
 function fmtMoney(v: number) {
   return Number(v).toLocaleString("ru-RU", {minimumFractionDigits: 2, maximumFractionDigits: 2}) + " Br";
 }
@@ -28,11 +39,15 @@ function esc(s: unknown) {
   return String(s ?? "").replace(/[&<>]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]!));
 }
 
-async function tg(chatId: string | number, text: string) {
+async function tg(chatId: string | number, text: string, keyboard?: unknown) {
+  const body: Record<string, unknown> = {
+    chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true,
+  };
+  if (keyboard) body.reply_markup = { inline_keyboard: keyboard };
   const res = await fetch(`https://api.telegram.org/bot${BOT}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) console.error(`Telegram error for ${chatId}:`, await res.text());
   return res.ok;
@@ -149,6 +164,83 @@ serve(async (req) => {
         }).eq("id", rec.id);
       }
       return new Response("ok");
+    }
+
+    // ---------- 0.5. переписка по заявке ----------
+    // Стоит перед разбором статуса и правок по той же причине, что и документ:
+    // сообщение приходит сюда обычным UPDATE, а diffLines про thread не знает и
+    // вернула бы «skip» — ни клиент, ни бухгалтер ничего бы не получили.
+    //
+    // Счётчики client_thread_notified / staff_thread_notified — это ИНДЕКСЫ в
+    // переписке, а не количество отправленного: в ней вперемешку лежат реплики
+    // обеих сторон, и считать «сколько своих отправил» пришлось бы дважды.
+    // Не дошло — оставляем индекс на неудачном сообщении и допошлём при
+    // следующем касании заявки.
+    const thread: ThreadMsg[] = Array.isArray(rec.thread) ? rec.thread : [];
+
+    if (thread.length) {
+      const fromClient = Number(rec.client_thread_notified ?? 0);
+      const fromStaff  = Number(rec.staff_thread_notified ?? 0);
+      const hasForClient = thread.slice(fromClient).some((m) => m && m.who === "staff");
+      const hasForStaff  = thread.slice(fromStaff).some((m) => m && m.who === "client");
+
+      if (hasForClient || hasForStaff) {
+        const patch: Record<string, unknown> = {};
+
+        // сообщение бухгалтера → клиенту, с кнопкой «Ответить» под ним
+        if (hasForClient && rec.client_id) {
+          const { data: client } = await sb
+            .from("clients").select("telegram_id").eq("id", rec.client_id).maybeSingle();
+
+          // Не привязан к боту — индекс НЕ двигаем: привяжется, и вопрос дойдёт.
+          // Пока же он виден ему в кабинете, туда сообщение попало сразу.
+          if (client && client.telegram_id) {
+            const suffix = await firmSuffix(client.telegram_id, rec.client);
+            const card = `💳 ${esc(rec.payee)} · ${fmtMoney(Number(rec.amount))} · ${fmtDate(String(rec.due))}`;
+            let i = fromClient;
+            for (; i < thread.length; i++) {
+              const m = thread[i];
+              if (!m || m.who !== "staff") continue;
+              const head = m.kind === "reminder"
+                ? "🔔 <b>Напоминание от бухгалтера</b>"
+                : "❗ <b>Бухгалтер спрашивает по вашей заявке</b>";
+              const ok = await tg(client.telegram_id,
+                `${head}\n\n${card}\n\n${esc(m.text)}${suffix}`,
+                [[{ text: "✍️ Ответить", callback_data: `reply:${rec.id}` }]]);
+              if (!ok) break;
+            }
+            if (i > fromClient) patch.client_thread_notified = i;
+          }
+        }
+
+        // ответ клиента → в общий чат бухгалтеров
+        if (hasForStaff && STAFF_CHATS.length) {
+          const card = `👤 ${esc(rec.client)}\n`
+                     + `💳 ${esc(rec.payee)} · ${fmtMoney(Number(rec.amount))} · ${fmtDate(String(rec.due))}`;
+          let i = fromStaff;
+          for (; i < thread.length; i++) {
+            const m = thread[i];
+            if (!m || m.who !== "client") continue;
+            // Файл клиент прислал в ответ, и он уже лежит во вложениях заявки —
+            // ссылкой, чтобы открыть его можно было прямо из чата.
+            const files = (m.files ?? [])
+              .filter((f) => f && f.url)
+              .map((f) => `📎 <a href="${esc(f.url)}">${esc(f.name || "файл")}</a>`)
+              .join("\n");
+            const text = `💬 <b>Клиент ответил по заявке</b>\n\n${card}\n\n`
+                       + (m.text ? `«${esc(m.text)}»` : "<i>без текста</i>")
+                       + (files ? `\n\n${files}` : "");
+            const results = await Promise.all(STAFF_CHATS.map((chat) => tg(chat, text)));
+            if (!results.some(Boolean)) break;   // не дошло вообще никому — повторим позже
+          }
+          if (i > fromStaff) patch.staff_thread_notified = i;
+        }
+
+        if (Object.keys(patch).length) {
+          await sb.from("payments").update(patch).eq("id", rec.id);
+        }
+        return new Response("ok");
+      }
     }
 
     // ---------- 1. смена статуса: уведомляем клиента ----------

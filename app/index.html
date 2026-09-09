@@ -39,6 +39,7 @@
       <div class="scard orange" data-filter="today"><div class="n" id="cToday">0</div><div class="l">На сегодня</div></div>
       <div class="scard gray" data-filter="week"><div class="n" id="cWeek">0</div><div class="l">Ближайшие 7 дней</div></div>
       <div class="scard blue" data-filter="prog"><div class="n" id="cProg">0</div><div class="l">В работе</div></div>
+      <div class="scard slate" data-filter="waiting"><div class="n" id="cWait">0</div><div class="l">Ждут ответа</div></div>
       <div class="scard purple" data-filter="await_doc"><div class="n" id="cDoc">0</div><div class="l">Отправить документ</div></div>
     </div>
 
@@ -191,6 +192,66 @@
   </section>
 
 </main>
+
+<!-- ===== ПЕРЕПИСКА ПО ЗАЯВКЕ (бухгалтер) =====
+     Лежит вне #list намеренно: список перерисовывается поллингом каждые
+     15 секунд, и набранный вопрос исчезал бы вместе с кареткой. -->
+<div id="thBox" class="ovl hidden">
+  <div class="ovl-card" role="dialog" aria-modal="true" aria-labelledby="thPayee">
+    <div class="ovl-head">
+      <div>
+        <div class="ovl-title" id="thPayee">—</div>
+        <div class="ovl-sub" id="thMeta">—</div>
+      </div>
+      <div class="ovl-amount" id="thAmount">—</div>
+    </div>
+
+    <div class="th-list" id="thList"></div>
+
+    <div class="th-warn hidden" id="thWarn"></div>
+
+    <label class="th-label">Частые вопросы</label>
+    <div class="th-chips" id="thChips"></div>
+
+    <label class="th-label" for="thText">Сообщение клиенту</label>
+    <textarea id="thText" rows="3" placeholder="Напишите, чего не хватает…"></textarea>
+    <div class="hint">Клиент получит вопрос в Telegram с кнопкой «Ответить» и увидит его в своём кабинете.</div>
+
+    <div class="ovl-btns">
+      <button class="btn soft th-act hidden" data-th="remind" id="thRemind">🔔 Напомнить</button>
+      <button class="btn soft" data-th="close">Закрыть</button>
+      <button class="btn p th-act" data-th="send">Отправить вопрос</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== ОТВЕТ КЛИЕНТА (кабинет) ===== -->
+<div id="clrBox" class="ovl hidden">
+  <div class="ovl-card" role="dialog" aria-modal="true" aria-labelledby="clrPayee">
+    <div class="ovl-head">
+      <div>
+        <div class="ovl-title" id="clrPayee">—</div>
+        <div class="ovl-sub">Ответ бухгалтеру по этой заявке</div>
+      </div>
+    </div>
+
+    <div class="clr-q" id="clrQuestion"></div>
+
+    <label class="th-label" for="clrText">Ваш ответ</label>
+    <textarea id="clrText" rows="3" placeholder="Например: счёт С-2211, во вложении"></textarea>
+
+    <div class="fg" style="margin-top:12px">
+      <label>Приложить счёт или документ (необязательно)</label>
+      <input type="file" id="clrFile" accept="image/*,.pdf,.xlsx,.docx,.xls,.doc" multiple>
+      <div class="hint">Файл попадёт прямо в заявку — бухгалтеру не придётся искать его в переписке.</div>
+    </div>
+
+    <div class="ovl-btns">
+      <button class="btn soft" data-clr="close">Отмена</button>
+      <button class="btn p" data-clr="send" id="clrSend">Отправить ответ</button>
+    </div>
+  </div>
+</div>
 
 <div id="toast"></div>
 
