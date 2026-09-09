@@ -9,8 +9,29 @@ const STAFF_CHATS = (Deno.env.get("TELEGRAM_CHAT_ID") ?? "")
 // service_role подставляется Supabase автоматически
 const sb = createClient(
   Deno.env.get("SUPABASE_URL")!,
-  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  // SB_SECRET_KEY — новый ключ (sb_secret_…); SUPABASE_SERVICE_ROLE_KEY —
+  // legacy, который платформа подставляет сама. Читаем новый с откатом на
+  // старый, чтобы функция работала и до отключения legacy-ключей, и после.
+  Deno.env.get("SB_SECRET_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
+
+// Кто имеет право дёргать эту функцию.
+//
+// Verify JWT у вебхуков включён, но он принимает ЛЮБОЙ валидный ключ проекта —
+// в том числе публичный, который лежит во фронте. То есть кто угодно мог бы
+// прислать сюда произвольный record: подделать сообщение клиента в чат
+// бухгалтеров, проставить флаги уведомлений чужой заявке или заставить функцию
+// скачать любой URL и переслать его в Telegram. Поэтому проверяем собственный
+// секрет, как это уже сделано у бота (TG_WEBHOOK_SECRET).
+//
+// Пока WEBHOOK_SECRET не задан в окружении, проверка выключена: это позволяет
+// выкатить функцию раньше, чем секрет появится в триггерах, и не уронить
+// уведомления на время перехода.
+const WEBHOOK_SECRET = Deno.env.get("WEBHOOK_SECRET") ?? "";
+function fromWebhook(req: Request) {
+  if (!WEBHOOK_SECRET) return true;
+  return req.headers.get("x-webhook-secret") === WEBHOOK_SECRET;
+}
 
 const months = ["янв","фев","мар","апр","мая","июн","июл","авг","сен","окт","ноя","дек"];
 
@@ -121,6 +142,7 @@ function diffLines(oldRec: Record<string, unknown>, rec: Record<string, unknown>
 }
 
 serve(async (req) => {
+  if (!fromWebhook(req)) return new Response("forbidden", { status: 403 });
   try {
     const body = await req.json();
     const rec = body.record;

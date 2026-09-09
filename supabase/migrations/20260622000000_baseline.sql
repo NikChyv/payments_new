@@ -130,7 +130,7 @@ declare
   today     text;
   cnt       int  := 0;
   bot_token text   := '<TELEGRAM_BOT_TOKEN>';  -- секрет: реальное значение только в проде, в репо плейсхолдер
-  chat_ids  text[] := array['670574684', '744619432'];  -- ты, Валентина
+  chat_ids  text[] := array['<CHAT_ID_1>', '<CHAT_ID_2>'];  -- секрет: реальные значения только в проде
   cid       text;
 begin
   today := to_char(now() at time zone 'Europe/Minsk', 'YYYY-MM-DD');
@@ -272,11 +272,21 @@ CREATE INDEX "clients_telegram_id_idx" ON "public"."clients" USING "btree" ("tel
 
 
 
-CREATE OR REPLACE TRIGGER "notify-client" AFTER UPDATE ON "public"."payments" FOR EACH ROW EXECUTE FUNCTION "supabase_functions"."http_request"('https://gmvhphuabiyggfurfhmc.supabase.co/functions/v1/notify-client', 'POST', '{"Content-type":"application/json","Authorization":"Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdtdmhwaHVhYml5Z2dmdXJmaG1jIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MDU2ODU0MSwiZXhwIjoyMDk2MTQ0NTQxfQ.3KxULW9agd7pcgSa32EGMAh3QLVFnySsAYPa8XPMzvk"}', '{}', '5000');
+-- Database Webhooks (notify-client на UPDATE, notify-payment на INSERT) здесь
+-- НЕ создаются. Две причины.
+--
+-- 1. Они и так живут вне миграций: настраиваются в панели Supabase, см.
+--    docs/ARCHITECTURE.md, раздел 5. В baseline попали случайно — он снят
+--    дампом боевой схемы.
+-- 2. Определение триггера содержит заголовок Authorization с ключом
+--    service_role. В публичном репозитории это ключ от всего проекта, а при
+--    локальном `db reset` такой триггер ещё и стучится боевыми вебхуками из
+--    стенда разработчика.
+--
+-- Пересоздать на проде: scripts/webhooks.sql (значения подставляются руками).
 
 
 
-CREATE OR REPLACE TRIGGER "notify-payment" AFTER INSERT ON "public"."payments" FOR EACH ROW EXECUTE FUNCTION "supabase_functions"."http_request"('https://gmvhphuabiyggfurfhmc.supabase.co/functions/v1/notify-payment', 'POST', '{"Content-type":"application/json","Authorization":"Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdtdmhwaHVhYml5Z2dmdXJmaG1jIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MDU2ODU0MSwiZXhwIjoyMDk2MTQ0NTQxfQ.3KxULW9agd7pcgSa32EGMAh3QLVFnySsAYPa8XPMzvk"}', '{}', '5000');
 
 
 

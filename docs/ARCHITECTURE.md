@@ -164,7 +164,9 @@ supabase/
 Эти вещи задаются в панели Supabase и при восстановлении с нуля настраиваются
 руками (процедуры — в RUNBOOK):
 
-- **Database Webhooks** для `notify-payment` и `notify-client`;
+- **Database Webhooks** для `notify-payment` и `notify-client` — пересоздаются
+  файлом `scripts/webhooks.sql` (значения ключей подставляются руками; в
+  миграциях их быть не должно, см. инцидент 09.09.2026 в SECURITY.md);
 - **Секреты** функций (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TG_WEBHOOK_SECRET`);
 - **Учётки сотрудников** в Auth (данные, не схема);
 - **Реальный токен бота** внутри `send_daily_reminder` (в репозитории — плейсхолдер).

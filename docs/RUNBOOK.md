@@ -170,8 +170,39 @@ docker exec -i supabase_db_payments psql -U postgres -d postgres < restore.sql
 4. Заново установить webhook (см. 6.5).
 
 ### 6.3 Утёк `service_role` / JWT-секрет
-Supabase → Settings → API → ротация ключей → передеплоить функции → обновить
-заголовок `Authorization` в Database Webhooks.
+
+**Проверить, жив ли утёкший ключ** (не «наверное», а фактом):
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" \
+  "https://<ref>.supabase.co/rest/v1/clients?select=id&limit=1" \
+  -H "apikey: <ключ>" -H "Authorization: Bearer <ключ>"
+```
+200 — ключ читает токены всех клиентов мимо RLS. 401 — уже мёртв.
+
+**Проект на новых ключах** (Settings → API Keys → вкладка «Publishable and
+secret»). Тогда ротировать JWT-секрет **не нужно** — legacy отключается
+кнопкой, а переход идёт без простоя, потому что старые и новые ключи работают
+параллельно:
+
+1. фронт → `sb_publishable_…` в `app/js/config.js`, пуш;
+2. секрет `SB_SECRET_KEY` = `sb_secret_…` в Edge Functions → Secrets,
+   передеплоить функции (код читает его с откатом на legacy);
+3. `scripts/webhooks.sql` в SQL Editor — пересоздаёт оба Database Webhook
+   с новым ключом и заголовком `x-webhook-secret`;
+4. секрет `WEBHOOK_SECRET` в Edge Functions → Secrets (та же строка, что в
+   триггерах) — только теперь включается проверка в функциях;
+5. проверить сквозной сценарий на тестовой фирме;
+6. Settings → API Keys → Legacy → **Disable JWT-based API keys**;
+7. проверить ещё раз и повторить curl выше — должно быть 401;
+8. через неделю: JWT Keys → Previously used → Revoke старому HS256.
+
+**Проект только на legacy-ключах.** Ротация JWT-секрета бьёт по всему разом:
+фронт, вебхуки, сессии сотрудников. Простой 3–5 минут, поэтому только после
+17:00 и с заранее подготовленными правками.
+
+**Из истории git ключ не вычистить** (форки, кэши сканеров). Спасает только то,
+что старый ключ становится мёртвым.
 
 ### 6.4 Бот молчит
 ```

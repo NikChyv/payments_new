@@ -7,7 +7,10 @@ const WEBHOOK_SECRET = Deno.env.get("TG_WEBHOOK_SECRET")!;
 // service_role подставляется Supabase автоматически — бот ходит в БД напрямую
 const sb = createClient(
   Deno.env.get("SUPABASE_URL")!,
-  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  // SB_SECRET_KEY — новый ключ (sb_secret_…); SUPABASE_SERVICE_ROLE_KEY —
+  // legacy, который платформа подставляет сама. Читаем новый с откатом на
+  // старый, чтобы функция работала и до отключения legacy-ключей, и после.
+  Deno.env.get("SB_SECRET_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
 
 // ---------- форматирование ----------

@@ -4,6 +4,16 @@ const BOT   = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
 // TELEGRAM_CHAT_ID — один или несколько chat_id через запятую, напр. "111,222"
 const CHATS = Deno.env.get("TELEGRAM_CHAT_ID")!.split(",").map(s => s.trim()).filter(Boolean);
 
+// Кто имеет право дёргать эту функцию. Verify JWT принимает любой валидный ключ
+// проекта, включая публичный из фронта, — то есть без своей проверки кто угодно
+// мог бы слать бухгалтерам «новую заявку» с произвольным текстом и ссылкой.
+// Пока WEBHOOK_SECRET не задан, проверка выключена: см. notify-client.
+const WEBHOOK_SECRET = Deno.env.get("WEBHOOK_SECRET") ?? "";
+function fromWebhook(req: Request) {
+  if (!WEBHOOK_SECRET) return true;
+  return req.headers.get("x-webhook-secret") === WEBHOOK_SECRET;
+}
+
 const months = ["янв","фев","мар","апр","мая","июн","июл","авг","сен","окт","ноя","дек"];
 
 function fmtDate(iso: string) {
@@ -16,6 +26,7 @@ function fmtMoney(v: number) {
 }
 
 serve(async (req) => {
+  if (!fromWebhook(req)) return new Response("forbidden", { status: 403 });
   try {
     const { record } = await req.json();
     if (!record) return new Response("no record", { status: 400 });

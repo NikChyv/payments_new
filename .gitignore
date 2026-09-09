@@ -10,3 +10,7 @@ __rwtest.txt
 .vscode/
 .idea/
 *~
+
+# Служебное от Supabase CLI: снимки схемы и pgdelta содержат ключи проекта.
+# Один `git add .` — и секрет снова в истории.
+supabase/.temp/
