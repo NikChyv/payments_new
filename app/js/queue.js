@@ -1,7 +1,7 @@
 import { state } from './state.js';
 import { daysBetween, addDays, addMonths, fmtDate, fmtMoney, todayStr } from './dates.js';
 import { save, removeRemote, uploadFiles, updatePaymentRemote, postStaffMessage } from './supabase.js';
-import { esc, toast, setText, genId } from './utils.js';
+import { esc, safeUrl, toast, setText, genId } from './utils.js';
 import { threadState, openThread } from './thread.js';
 
 // экспортируются: те же подписи идут в выгрузку Excel (export.js)
@@ -116,7 +116,7 @@ export function render() {
 // Все вложения отдельными значками — их может быть несколько.
 export function fileBadges(it) {
   return (it.files || []).map(f => f.url
-    ? `<a class="badge b-file" href="${esc(f.url)}" target="_blank" rel="noopener" title="Открыть файл">📎 ${esc(f.name || "файл")}</a>`
+    ? `<a class="badge b-file" href="${esc(safeUrl(f.url))}" target="_blank" rel="noopener" title="Открыть файл">📎 ${esc(f.name || "файл")}</a>`
     : `<span class="badge b-file" title="${esc(f.name || "файл")}">📎 ${esc(f.name || "файл")}</span>`
   ).join("");
 }
@@ -125,7 +125,7 @@ export function fileBadges(it) {
 // рядом лежат счёт ОТ клиента и платёжка ДЛЯ него, и путать их нельзя.
 export function staffFileBadges(it) {
   return (it.staffFiles || []).map(f => f.url
-    ? `<a class="badge b-doc" href="${esc(f.url)}" target="_blank" rel="noopener" title="Платёжный документ">📄 ${esc(f.name || "документ")}</a>`
+    ? `<a class="badge b-doc" href="${esc(safeUrl(f.url))}" target="_blank" rel="noopener" title="Платёжный документ">📄 ${esc(f.name || "документ")}</a>`
     : `<span class="badge b-doc">📄 ${esc(f.name || "документ")}</span>`
   ).join("");
 }

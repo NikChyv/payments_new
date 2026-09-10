@@ -16,6 +16,22 @@ function fromWebhook(req: Request) {
 
 const months = ["янв","фев","мар","апр","мая","июн","июл","авг","сен","окт","ноя","дек"];
 
+// Сообщение уходит с parse_mode: HTML, а поля заявки пишет клиент. Без
+// экранирования `<b` в названии получателя ломает разметку, а `<a href=…>`
+// подменяет ссылку в уведомлении бухгалтеру (находка M4.3).
+// Telegram разбирает подмножество HTML — ему хватает трёх символов.
+function esc(s: unknown) {
+  return String(s ?? "").replace(/[&<>]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]!));
+}
+
+// Ссылка идёт в href, поэтому проверяем схему, а не экранируем: `javascript:`
+// экранирование пережил бы. Зеркалит is_safe_file_url в базе — та не пускает
+// такие ссылки в новые заявки, эта прикрывает те, что завелись раньше.
+function safeUrl(u: unknown) {
+  const s = String(u ?? "");
+  return /^https?:\/\/[^\s"'<>]+$/i.test(s) ? s : "";
+}
+
 function fmtDate(iso: string) {
   const [y, m, d] = iso.split("-");
   return `${parseInt(d)} ${months[parseInt(m) - 1]} ${y}`;
@@ -40,16 +56,18 @@ serve(async (req) => {
     // Уведомление клиенту о таких заявках — отдельная задача, пока не делаем.
     if (record.created_by_staff) return new Response("skip: staff-created");
 
+    const fileUrl = safeUrl(record.file_url);
+
     const lines = [
       `📋 <b>Новая заявка на оплату</b>`,
       ``,
-      `👤 Клиент: ${record.client || "—"}`,
-      `💳 Кому: ${record.payee || "—"}`,
+      `👤 Клиент: ${esc(record.client || "—")}`,
+      `💳 Кому: ${esc(record.payee || "—")}`,
       `💰 Сумма: ${fmtMoney(Number(record.amount || 0))}`,
       `📅 Срок: ${record.due ? fmtDate(record.due) : "—"}`,
-      record.purpose    ? `📝 ${record.purpose}`    : null,
-      record.requisites ? `🔢 ${record.requisites}` : null,
-      record.file_url   ? `📎 <a href="${record.file_url}">Открыть файл</a>` : null,
+      record.purpose    ? `📝 ${esc(record.purpose)}`    : null,
+      record.requisites ? `🔢 ${esc(record.requisites)}` : null,
+      fileUrl           ? `📎 <a href="${fileUrl}">Открыть файл</a>` : null,
     ].filter(Boolean).join("\n");
 
     // шлём каждому получателю отдельно; ошибка одного не блокирует остальных

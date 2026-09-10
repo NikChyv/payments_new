@@ -1,6 +1,6 @@
 import { state } from './state.js';
 import { postStaffMessage } from './supabase.js';
-import { esc, toast } from './utils.js';
+import { esc, safeUrl, toast } from './utils.js';
 import { fmtDate, fmtMoney } from './dates.js';
 
 // Переписка по заявке: бухгалтер спрашивает недостающее, клиент отвечает из
@@ -54,7 +54,7 @@ export function threadHtml(it) {
   return list.map(m => {
     const files = (m.files || [])
       .filter(f => f && f.url)
-      .map(f => `<a class="th-file" href="${esc(f.url)}" target="_blank" rel="noopener">📎 ${esc(f.name || "файл")}</a>`)
+      .map(f => `<a class="th-file" href="${esc(safeUrl(f.url))}" target="_blank" rel="noopener">📎 ${esc(f.name || "файл")}</a>`)
       .join("");
     const who = m.who === "client" ? esc(m.author || it.client) : esc(m.author || "Бухгалтер");
     const kind = m.kind === "reminder" ? " · напоминание" : "";

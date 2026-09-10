@@ -1,6 +1,6 @@
 import { sb, useRemote, fromRow, uploadFiles } from './supabase.js';
 import { state } from './state.js';
-import { esc, toast } from './utils.js';
+import { esc, safeUrl, toast } from './utils.js';
 import { fmtDate, fmtMoney } from './dates.js';
 import { fileBadges, staffFileBadges } from './queue.js';
 import { threadState } from './thread.js';
@@ -123,7 +123,7 @@ function clThreadHtml(it) {
   const msgs = list.map(m => {
     const files = (m.files || [])
       .filter(f => f && f.url)
-      .map(f => `<a class="th-file" href="${esc(f.url)}" target="_blank" rel="noopener">📎 ${esc(f.name || "файл")}</a>`)
+      .map(f => `<a class="th-file" href="${esc(safeUrl(f.url))}" target="_blank" rel="noopener">📎 ${esc(f.name || "файл")}</a>`)
       .join("");
     return `<div class="th-msg ${m.who === "client" ? "cl" : "st"}">` +
       `<div class="th-who">${m.who === "client" ? "Вы" : "Бухгалтер"}</div>` +
