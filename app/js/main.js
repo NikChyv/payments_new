@@ -1,4 +1,4 @@
-import { useRemote, sb, load, save, uploadFiles, updatePaymentRemote } from './supabase.js';
+import { useRemote, sb, load, uploadFiles, updateContentRemote, insertPaymentRemote } from './supabase.js';
 import { state } from './state.js';
 import { todayStr, fmtDate } from './dates.js';
 import { esc, toast, genId } from './utils.js';
@@ -207,7 +207,10 @@ async function onSubmit(e) {
       it.purpose     = f.purpose.value.trim();
       it.needReceipt = f.needReceipt.checked;
       it.files       = files;
-      await updatePaymentRemote(it);
+      // Статус форма не показывает и не меняет, поэтому и не пишем его: раньше
+      // сюда уезжал статус из момента открытия формы и откатывал чужое
+      // «Отметить оплаченным» (M1.2).
+      await updateContentRemote(it);
     } else {
       // сотрудник заводит заявку: для своего клиента или личную напоминалку
       const sel = document.getElementById("ncFormClient");
@@ -225,8 +228,10 @@ async function onSubmit(e) {
         due: f.due.value, recurrence: f.recurrence.value, purpose: f.purpose.value.trim(),
         status: "new", needReceipt: f.needReceipt.checked, files, created: todayStr(),
       };
+      // insert одной строки вместо upsert всей очереди: заводя новую заявку,
+      // бухгалтер не должен перезаписывать остальные (M1.1)
+      await insertPaymentRemote(rec);
       state.items.push(rec);
-      save();
     }
   } catch(err) {
     console.error(err);

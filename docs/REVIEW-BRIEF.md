@@ -56,6 +56,7 @@ node tools/uicheck.mjs --serve    # поднять фронт и держать 
 ```
 node tools/uicheck.mjs              # снимки экранов + ошибки консоли
 node tools/uicheck.mjs --width 390  # то же на мобильной ширине
+node tools/racecheck.mjs           # гонка двух вкладок в очереди
 ```
 
 Скрипт показывает и то, чего не видно глазами: молчаливые ошибки в модулях

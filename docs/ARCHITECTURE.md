@@ -125,7 +125,8 @@
 Telegram бухгалтерам. Триггер аудита пишет `INSERT` в `payments_audit`.
 
 **Бухгалтер проводит платёж**
-Смена статуса в очереди → upsert в `payments` → DB Webhook → `notify-client`
+Смена статуса в очереди → точечный `update … where id = ? and status = ?`
+в `payments` → DB Webhook → `notify-client`
 (шлёт только при первом переходе, затем ставит флаг) → клиенту в бот.
 Аудит фиксирует переход `old_status → new_status`.
 

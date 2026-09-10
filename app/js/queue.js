@@ -1,6 +1,7 @@
 import { state } from './state.js';
 import { daysBetween, addDays, addMonths, fmtDate, fmtMoney, todayStr } from './dates.js';
-import { save, removeRemote, uploadFiles, updatePaymentRemote, postStaffMessage } from './supabase.js';
+import { removeRemote, uploadFiles, changeStatusRemote, attachDocRemote,
+         insertPaymentRemote, postStaffMessage } from './supabase.js';
 import { esc, safeUrl, toast, setText, genId } from './utils.js';
 import { threadState, openThread } from './thread.js';
 
@@ -201,7 +202,27 @@ function _btn(kind, act, label) {
   return `<button class="btn ${kind}" data-act="${act}">${label}</button>`;
 }
 
-export function onListClick(e) {
+// Куда ведёт каждая кнопка. Ожидаемый статус в условие update мы берём не
+// отсюда, а из строки, которую человек видел в момент клика: важно не «какой
+// переход разрешён вообще», а «изменилось ли что-то с тех пор, как он смотрел».
+const MOVES = {
+  take:   {to: "in_progress", msg: "Взято в работу"},
+  back:   {to: "new",         msg: "Возвращено в «Новые»"},
+  send:   {to: "sent",        msg: "Платёж закрыт"},
+  unsend: {to: "paid",        msg: "Возвращено в «Оплачено»"},
+  pay:    {to: "paid",        msg: null},   // сообщение зависит от повторяемости
+  unpay:  {to: "in_progress", msg: null},
+};
+
+// Заявку тронул кто-то другой. Молча перезаписывать нельзя — из этого и росла
+// двойная оплата: бухгалтер видел «в работе» у уже оплаченного платежа.
+function reportConflict(current) {
+  toast(current
+    ? `Заявку тем временем изменили — сейчас «${stLbl[current.status] || current.status}». Экран обновлён`
+    : "Заявку тем временем удалили — экран обновлён");
+}
+
+export async function onListClick(e) {
   const b = e.target.closest && e.target.closest("button[data-act]");
   if (!b) return;
   const row = e.target.closest(".row");
@@ -210,27 +231,40 @@ export function onListClick(e) {
   if (!it) return;
   const act = b.getAttribute("data-act");
 
-  // Прикрепление документа — единственное действие с загрузкой файла, поэтому
-  // оно асинхронное и уходит своим путём, мимо общего save() внизу.
+  // Прикрепление документа — с загрузкой файла, поэтому своим путём.
   if (act === "attach") { attachDocument(it); return; }
 
-  // Переписка тоже уходит мимо save(): она дописывается на сервере отдельной
-  // RPC, а save() перезаписал бы все заявки разом сталым состоянием вкладки.
+  // Переписка дописывается на сервере отдельной RPC: параллельный ответ клиента
+  // так не теряется.
   if (act === "thread") { openThread(it, render); return; }
   if (act === "remind") { remindClient(it); return; }
 
-  if (act === "take")   { it.status = "in_progress"; toast("Взято в работу"); }
-  else if (act === "back")   { it.status = "new";         toast("Возвращено в «Новые»"); }
-  else if (act === "pay")    { markPaid(it); }
-  else if (act === "send")   { it.status = "sent";        toast("Платёж закрыт"); }
-  else if (act === "unpay")  { undoPaid(it); }
-  else if (act === "unsend") { it.status = "paid";        toast("Возвращено в «Оплачено»"); }
-  else if (act === "del") {
+  if (act === "del") {
     if (!confirm("Удалить платёж?")) return;
-    removeRemote(it.id);
+    try { await removeRemote(it.id); }
+    catch (err) { console.error(err); toast("Не удалось удалить — попробуйте ещё раз"); return; }
     state.items = state.items.filter(x => x !== it);
+    render();
+    return;
   }
-  save();
+
+  const move = MOVES[act];
+  if (!move) return;
+
+  // Статус на экране в момент клика. Он же уходит в условие update — не совпал,
+  // значит между отрисовкой и нажатием заявку кто-то перевёл.
+  const seen = it.status;
+
+  let res;
+  try { res = await changeStatusRemote(it, seen, move.to); }
+  catch (err) { console.error(err); toast("Ошибка записи в базу"); render(); return; }
+
+  if (!res.ok) { reportConflict(res.current); render(); return; }
+
+  if (act === "pay")        await afterPaid(it);
+  else if (act === "unpay") await afterUndoPaid(it);
+  else toast(move.msg);
+
   render();
 }
 
@@ -262,10 +296,9 @@ async function remindClient(it) {
 
 // Бухгалтер прикладывает платёжный документ для клиента.
 //
-// Пишем точечным update, а не общим save(): тот перезаписывает все заявки
-// разом, и уведомление о документе пришлось бы вылавливать среди десятка
-// холостых срабатываний вебхука. Здесь меняется ровно одна строка — значит
-// notify-client получит ровно одно событие и отправит файл клиенту.
+// Меняется ровно одна строка — значит notify-client получит ровно одно событие
+// и отправит файл клиенту, а не будет вылавливать его среди холостых
+// срабатываний вебхука.
 async function attachDocument(it) {
   // Отменённый выбор файла событий не даёт, поэтому убрать поле «после диалога»
   // нельзя — вместо этого держим в документе не больше одного: перед новым
@@ -297,19 +330,25 @@ async function attachDocument(it) {
     if (!uploaded.length) return;
 
     const prev = Array.isArray(it.staffFiles) ? it.staffFiles : [];
+    const seen = it.status;          // статус, который бухгалтер видел на экране
     it.staffFiles = prev.concat(uploaded);
     it.status = "sent";
 
+    let res;
     try {
-      await updatePaymentRemote(it);
+      res = await attachDocRemote(it, seen);
     } catch (e) {
       console.error(e);
       it.staffFiles = prev;          // откатываем локально, иначе экран соврёт
-      it.status = "paid";
+      it.status = seen;
       toast("Не удалось сохранить документ — попробуйте ещё раз");
       render();
       return;
     }
+    // Заявку успели тронуть из другой вкладки. Состояние уже перечитано внутри
+    // attachDocRemote, поэтому откатывать руками нечего — документ просто не
+    // прикрепился, и человек об этом узнает.
+    if (!res.ok) { reportConflict(res.current); render(); return; }
 
     toast(uploaded.length === 1
       ? "Документ отправлен клиенту в Telegram"
@@ -320,32 +359,71 @@ async function attachDocument(it) {
   input.click();
 }
 
-export function markPaid(it) {
-  it.status = "paid";
-  let msg = "Отмечено как оплачено";
-  if (it.recurrence !== "once") {
-    const nextDue = nextDueOf(it);
-    const copy = JSON.parse(JSON.stringify(it));
-    // файлы не переносим: у следующего платежа будет свой счёт
-    copy.id = genId(); copy.status = "new"; copy.due = nextDue; copy.files = []; copy.created = todayStr();
-    copy.autoCreated = true; // заявку не подавал клиент — уведомление не шлём
-    state.items.push(copy);
-    msg = "Оплачено. Создан следующий платёж на " + fmtDate(nextDue);
+// Платёж отмечен оплаченным — статус в базе уже переведён. Осталось завести
+// следующий, если платёж повторяющийся.
+//
+// Копию собираем по полю, а не клонированием заявки целиком. Клонирование
+// тащило за собой платёжный документ бухгалтера и всю переписку по прошлому
+// платежу (M1.3): клиент получал «документ отправлен» по заявке, которой ещё
+// никто не занимался, и видел в ней чужой разговор.
+async function afterPaid(it) {
+  if (it.recurrence === "once") { toast("Отмечено как оплачено"); return; }
+
+  const nextDue = nextDueOf(it);
+  const copy = {
+    id: genId(),
+    client: it.client,
+    client_id: it.client_id || null,
+    createdByStaff: it.createdByStaff || null,
+    payee: it.payee,
+    amount: it.amount,
+    requisites: it.requisites,
+    due: nextDue,
+    recurrence: it.recurrence,
+    purpose: it.purpose,
+    status: "new",
+    needReceipt: it.needReceipt,
+    files: [],       // счёт у следующего платежа будет свой
+    staffFiles: [],  // и платёжный документ тоже
+    thread: [],      // переписка была про прошлый платёж
+    created: todayStr(),
+    autoCreated: true, // заявку не подавал клиент — уведомление не шлём
+  };
+
+  try {
+    await insertPaymentRemote(copy);
+  } catch (e) {
+    console.error(e);
+    // Статус уже переведён, и это правда: платёж оплачен. Врать про
+    // созданный следующий не будем — скажем как есть.
+    toast("Оплачено, но следующий платёж не создался — заведите вручную");
+    return;
   }
-  toast(msg);
+
+  state.items.push(copy);
+  toast("Оплачено. Создан следующий платёж на " + fmtDate(nextDue));
 }
 
-export function undoPaid(it) {
-  it.status = "in_progress";
-  let removed = false;
-  if (it.recurrence !== "once") {
-    const nd = nextDueOf(it);
-    const idx = state.items.findIndex(c =>
-      c !== it && c.status === "new" && c.recurrence === it.recurrence &&
-      c.client === it.client && c.payee === it.payee &&
-      Number(c.amount) === Number(it.amount) && c.due === nd
-    );
-    if (idx >= 0) { removeRemote(state.items[idx].id); state.items.splice(idx, 1); removed = true; }
+// Отмена оплаты — статус уже возвращён в «в работе». Убираем следующий платёж,
+// если он был создан автоматически и его ещё никто не тронул.
+async function afterUndoPaid(it) {
+  if (it.recurrence === "once") { toast("Оплата отменена"); return; }
+
+  const nd = nextDueOf(it);
+  const idx = state.items.findIndex(c =>
+    c !== it && c.status === "new" && c.recurrence === it.recurrence &&
+    c.client === it.client && c.payee === it.payee &&
+    Number(c.amount) === Number(it.amount) && c.due === nd
+  );
+  if (idx < 0) { toast("Оплата отменена"); return; }
+
+  try {
+    await removeRemote(state.items[idx].id);
+  } catch (e) {
+    console.error(e);
+    toast("Оплата отменена, но следующий платёж удалить не вышло — удалите вручную");
+    return;
   }
-  toast(removed ? "Оплата отменена, следующий платёж удалён" : "Оплата отменена");
+  state.items.splice(idx, 1);
+  toast("Оплата отменена, следующий платёж удалён");
 }

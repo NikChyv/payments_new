@@ -26,11 +26,11 @@ export function toRow(it) {
     // документы бухгалтера живут отдельно от files: те — счёт от клиента,
     // и их первый элемент зеркалится в file_url, который читают рассылки
     staff_files: Array.isArray(it.staffFiles) ? it.staffFiles : [],
-    // thread здесь НАМЕРЕННО нет. save() ниже перезаписывает все заявки разом
-    // из локального состояния, а в переписку пишет и клиент — из кабинета и из
-    // бота. Попади она сюда, ответ, пришедший между 15-секундными опросами, был
-    // бы молча затёрт следующим нажатием «Взять в работу». Переписка меняется
-    // только дописыванием на сервере: post_staff_message / reply_by_token.
+    // thread здесь НАМЕРЕННО нет. Переписка меняется только дописыванием на
+    // сервере (post_staff_message / reply_by_token), потому что пишет в неё и
+    // клиент — из кабинета и из бота. У новой заявки её и быть не может, а
+    // отправлять пустой массив поверх — значит однажды снова затереть ответ,
+    // пришедший между опросами.
   };
 }
 
@@ -99,14 +99,110 @@ export async function load() {
   if (!state.items) { state.items = seed(); _saveLocal(); }
 }
 
-export function save() {
-  if (useRemote) {
-    sb.from(TABLE).upsert(state.items.map(toRow)).then(res => {
-      if (res.error) { console.error(res.error); toast("Ошибка записи в базу"); }
-    });
-    return;
+// ---------------------------------------------------------------------------
+// Запись в базу — только точечная
+//
+// Здесь был общий save(): он делал upsert ВСЕХ заявок из состояния вкладки.
+// То есть любое нажатие «Взять в работу» переписывало всю очередь тем, что
+// вкладка успела загрузить в прошлый раз, и выигрывал тот, кто нажал последним.
+// Отсюда росло сразу пять находок ревью: откат чужих статусов (M1.1) с риском
+// оплатить дважды, статус из момента открытия формы (M1.2), затирание файла из
+// ответа клиента (M7.1), ложное «бухгалтер изменил вашу заявку» (M4.8) и запись
+// затирания в журнал как честной правки (M10.2).
+//
+// Правило теперь одно: пишем ровно те поля, которые человек менял, ровно в ту
+// строку, которую он видел, и только если она с тех пор не изменилась.
+// ---------------------------------------------------------------------------
+
+// Поля содержания заявки. Статуса здесь намеренно нет: форма правки его не
+// показывает и менять не должна (M1.2).
+function contentRow(it) {
+  const files = Array.isArray(it.files) ? it.files : [];
+  return {
+    payee: it.payee, amount: it.amount, requisites: it.requisites || null,
+    due: it.due, recurrence: it.recurrence, purpose: it.purpose || null,
+    need_receipt: !!it.needReceipt,
+    files,
+    file_url:  files.length ? (files[0].url  || null) : null,
+    file_name: files.length ? (files[0].name || null) : null,
+  };
+}
+
+// Перечитать одну заявку. Нужна, когда наша запись не прошла: человеку надо
+// показать то, что в базе на самом деле, а не то, что он видел минуту назад.
+async function refetch(id) {
+  const res = await sb.from(TABLE).select("*").eq("id", id).maybeSingle();
+  if (res.error) throw res.error;
+  return res.data ? fromRow(res.data) : null;
+}
+
+// Заменить заявку в состоянии на свежую версию (или убрать, если её удалили).
+function replaceLocal(it, fresh) {
+  if (fresh) { Object.assign(it, fresh); return; }
+  state.items = state.items.filter(x => x !== it);
+}
+
+// Смена статуса.
+//
+// `.eq("status", from)` — то самое условие, ради которого всё затевалось: если
+// заявку уже перевёл кто-то другой, update не найдёт строку и вернёт пусто.
+// Тогда мы не пишем поверх, а перечитываем и говорим человеку.
+//
+// Возвращает {ok:true} либо {ok:false, current} — current это то, что в базе
+// сейчас, или null, если заявку удалили.
+export async function changeStatusRemote(it, from, to) {
+  if (!useRemote) { it.status = to; _saveLocal(); return {ok: true}; }
+
+  const res = await sb.from(TABLE).update({status: to})
+    .eq("id", it.id).eq("status", from).select();
+  if (res.error) throw res.error;
+
+  if (!res.data || !res.data.length) {
+    const fresh = await refetch(it.id);
+    replaceLocal(it, fresh);
+    return {ok: false, current: fresh};
   }
-  _saveLocal();
+  Object.assign(it, fromRow(res.data[0]));
+  return {ok: true};
+}
+
+// Правка содержания сотрудником. Статус не трогаем вовсе — значит параллельное
+// «Отметить оплаченным» из соседней вкладки переживёт эту правку.
+//
+// Что здесь осталось честным компромиссом: набор файлов заменяется тем, что
+// в форме. Если клиент приложит файл, пока форма открыта, этот файл уйдёт —
+// но уже осознанно, а не заодно со всей очередью.
+export async function updateContentRemote(it) {
+  if (!useRemote) { _saveLocal(); return; }
+  const res = await sb.from(TABLE).update(contentRow(it)).eq("id", it.id);
+  if (res.error) throw res.error;
+}
+
+// Документ бухгалтера: пишем вложения и статус одной строкой, с проверкой
+// прежнего статуса — заявку могли успеть вернуть в работу.
+export async function attachDocRemote(it, from) {
+  if (!useRemote) { _saveLocal(); return {ok: true}; }
+
+  const res = await sb.from(TABLE)
+    .update({staff_files: it.staffFiles || [], status: it.status})
+    .eq("id", it.id).eq("status", from).select();
+  if (res.error) throw res.error;
+
+  if (!res.data || !res.data.length) {
+    const fresh = await refetch(it.id);
+    replaceLocal(it, fresh);
+    return {ok: false, current: fresh};
+  }
+  Object.assign(it, fromRow(res.data[0]));
+  return {ok: true};
+}
+
+// Новая заявка — insert одной строки вместо upsert всей очереди.
+export async function insertPaymentRemote(rec) {
+  if (!useRemote) { _saveLocal(); return; }
+  const res = await sb.from(TABLE).insert(toRow(rec)).select();
+  if (res.error) throw res.error;
+  if (res.data && res.data.length) Object.assign(rec, fromRow(res.data[0]));
 }
 
 function _saveLocal() {
@@ -174,20 +270,12 @@ export async function uploadFiles(fileList) {
   return out;
 }
 
-// Точечная правка заявки сотрудником. Именно update, а не общий upsert всех
-// строк: тогда БД видит изменение ровно одной заявки и правильно помечает,
-// кто её правил (last_edit_role) — от этого зависит уведомление клиенту.
-export async function updatePaymentRemote(it) {
+// Удаление ждём и проверяем: раньше ошибка уходила молча в консоль, а строка
+// пропадала с экрана — человек считал заявку удалённой, хотя она осталась.
+export async function removeRemote(idv) {
   if (!useRemote) { _saveLocal(); return; }
-  const row = toRow(it);
-  delete row.id;
-  delete row.created_at;
-  const res = await sb.from(TABLE).update(row).eq("id", it.id);
+  const res = await sb.from(TABLE).delete().eq("id", idv);
   if (res.error) throw res.error;
-}
-
-export function removeRemote(idv) {
-  if (useRemote) sb.from(TABLE).delete().eq("id", idv).then(res => { if (res.error) console.error(res.error); });
 }
 
 function seed() {
