@@ -60,6 +60,11 @@ export function chromePath() {
 
 export function launchChrome(profileName = "uicheck-chrome") {
   const profile = path.join(os.tmpdir(), profileName);
+  // Профиль сносим перед запуском. Иначе в нём остаётся сессия бухгалтера от
+  // прошлого прогона, а после `supabase db reset` учётка заводится заново с
+  // новым id — и страница получает 403 на /auth/v1/user. Выглядит как поломка
+  // приложения, хотя сломан только стенд.
+  try { fs.rmSync(profile, { recursive: true, force: true }); } catch { /* занят — переживём */ }
   return spawn(chromePath(), ["--headless=new", "--disable-gpu", "--no-sandbox",
     "--hide-scrollbars", `--remote-debugging-port=${CDP}`, `--user-data-dir=${profile}`, "about:blank"],
     { stdio: "ignore", detached: false });

@@ -60,17 +60,55 @@ function esc(s: unknown) {
   return String(s ?? "").replace(/[&<>]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]!));
 }
 
-async function tg(chatId: string | number, text: string, keyboard?: unknown) {
+// Неудачная отправка — в журнал, а не только в консоль.
+//
+// У Database Webhooks нет ретраев, а console.error никто не читает: ровно так
+// получился инцидент «клиент месяц не получал уведомлений». Теперь каждая
+// осечка оставляет след, а health.yml сторожит счётчик (находка M4.4).
+//
+// Сам журнал падать не имеет права: если запись не удалась, уведомления это
+// касаться не должно.
+async function logFailure(branch: string, paymentId: unknown, chatId: unknown, detail: string) {
+  try {
+    await sb.from("notify_failures").insert({
+      fn: "notify-client", branch,
+      payment_id: paymentId == null ? null : String(paymentId),
+      chat_id: chatId == null ? null : String(chatId),
+      detail: detail.slice(0, 2000),
+    });
+  } catch (e) {
+    console.error("не записался notify_failures:", e);
+  }
+}
+
+async function tg(chatId: string | number, text: string, keyboard?: unknown, branch = "?", paymentId?: unknown) {
   const body: Record<string, unknown> = {
     chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true,
   };
   if (keyboard) body.reply_markup = { inline_keyboard: keyboard };
-  const res = await fetch(`https://api.telegram.org/bot${BOT}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) console.error(`Telegram error for ${chatId}:`, await res.text());
+
+  // fetch БРОСАЕТ при сетевой ошибке, а не возвращает !ok. Раньше такое
+  // исключение вылетало из ветки наружу и рубило весь вызов: остальные
+  // уведомления по заявке не уходили вовсе. Отправка не имеет права бросать.
+  let res: Response;
+  try {
+    res = await fetch(`https://api.telegram.org/bot${BOT}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    const detail = `Telegram недоступен: ${e instanceof Error ? e.message : String(e)}`;
+    console.error(detail);
+    await logFailure(branch, paymentId, chatId, detail);
+    return false;
+  }
+
+  if (!res.ok) {
+    const detail = await res.text();
+    console.error(`Telegram error for ${chatId}:`, detail);
+    await logFailure(branch, paymentId, chatId, `${res.status} ${detail}`);
+  }
   return res.ok;
 }
 
@@ -86,17 +124,46 @@ async function tg(chatId: string | number, text: string, keyboard?: unknown) {
 //    сами и человеческое.
 //
 // sendPhoto не годится даже для фотографии платёжки: Telegram её пережмёт.
-async function tgDocument(chatId: string | number, url: string, name: string, caption?: string) {
-  const file = await fetch(url);
-  if (!file.ok) { console.error(`Не скачался файл ${url}: ${file.status}`); return false; }
+async function tgDocument(chatId: string | number, url: string, name: string, caption: string | undefined, paymentId: unknown) {
+  // Битая ссылка на документ — самая коварная осечка: раньше она делала заявку
+  // навсегда глухой и никак себя не проявляла. Причём ссылка может не просто
+  // отдать 404, а вовсе не отозваться — тогда fetch БРОСАЕТ, и это исключение
+  // рубило весь вызов, а не одну ветку.
+  let file: Response;
+  try {
+    file = await fetch(url);
+  } catch (e) {
+    const detail = `файл не забрать: ${e instanceof Error ? e.message : String(e)} (${url})`;
+    console.error(detail);
+    await logFailure("документ", paymentId, chatId, detail);
+    return false;
+  }
+  if (!file.ok) {
+    console.error(`Не скачался файл ${url}: ${file.status}`);
+    await logFailure("документ", paymentId, chatId, `файл не скачался: ${file.status} ${url}`);
+    return false;
+  }
 
   const form = new FormData();
   form.append("chat_id", String(chatId));
   form.append("document", new Blob([await file.arrayBuffer()]), name || "document");
   if (caption) { form.append("caption", caption); form.append("parse_mode", "HTML"); }
 
-  const res = await fetch(`https://api.telegram.org/bot${BOT}/sendDocument`, { method: "POST", body: form });
-  if (!res.ok) console.error(`Telegram sendDocument error for ${chatId}:`, await res.text());
+  let res: Response;
+  try {
+    res = await fetch(`https://api.telegram.org/bot${BOT}/sendDocument`, { method: "POST", body: form });
+  } catch (e) {
+    const detail = `Telegram недоступен: ${e instanceof Error ? e.message : String(e)}`;
+    console.error(detail);
+    await logFailure("документ", paymentId, chatId, detail);
+    return false;
+  }
+
+  if (!res.ok) {
+    const detail = await res.text();
+    console.error(`Telegram sendDocument error for ${chatId}:`, detail);
+    await logFailure("документ", paymentId, chatId, `${res.status} ${detail}`);
+  }
   return res.ok;
 }
 
@@ -143,49 +210,85 @@ function diffLines(oldRec: Record<string, unknown>, rec: Record<string, unknown>
 
 serve(async (req) => {
   if (!fromWebhook(req)) return new Response("forbidden", { status: 403 });
+
+  // Живут снаружи try, потому что нужны и обработчику исключения: что успели
+  // доставить, то обязаны записать в любом случае.
+  const patch: Record<string, unknown> = {};
+  const done: string[] = [];
+  let paymentId: unknown = null;
+
+  // Записать накопленное. Зовётся и по-хорошему, и из catch, поэтому сама
+  // падать не имеет права.
+  const flush = async () => {
+    if (!paymentId || !Object.keys(patch).length) return;
+    try {
+      await sb.from("payments").update(patch).eq("id", paymentId);
+    } catch (e) {
+      console.error("не записались флаги уведомлений:", e);
+      await logFailure("запись флагов", paymentId, null,
+        `исключение: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
   try {
     const body = await req.json();
     const rec = body.record;
     const old = body.old_record;
 
     if (body.type !== "UPDATE" || !rec || !old) return new Response("skip");
+    paymentId = rec.id;
+
+    // -----------------------------------------------------------------------
+    // Ветки ниже НЕ выходят из функции досрочно (находка M4.1)
+    //
+    // Раньше каждая заканчивалась `return`, и первая же сработавшая запирала
+    // все остальные. У клиента без Telegram ветка «документ» на КАЖДОМ UPDATE
+    // входила и выходила, а «оплачено» до него не доходило никогда. Битая
+    // ссылка на документ (файл удалили, Storage отдал 4xx) делала заявку глухой
+    // навсегда: сообщения по ней не уходили больше вообще никакие.
+    //
+    // Теперь каждая ветка делает своё дело и складывает результат в `patch`,
+    // а строка обновляется ОДИН раз в конце. Заодно это один повторный вызов
+    // вебхука вместо нескольких.
+    // -----------------------------------------------------------------------
+
+    // Телеграм клиента нужен трём веткам — читаем его один раз, а не трижды.
+    let clientTg: number | null = null;
+    if (rec.client_id) {
+      const { data: client } = await sb
+        .from("clients").select("telegram_id").eq("id", rec.client_id).maybeSingle();
+      clientTg = client?.telegram_id ?? null;
+    }
 
     // ---------- 0. платёжный документ от бухгалтера ----------
-    // Стоит ПЕРЕД разбором статуса и правок намеренно. Прикрепление документа
-    // приходит сюда как обычный UPDATE от сотрудника: не перехвати мы его
-    // здесь, ниже сработала бы ветка «изменил заявку», а diffLines про
-    // staff_files не знает и вернула бы «skip» — клиент не получил бы ничего.
+    // Стоит первой намеренно: прикрепление документа приходит сюда как обычный
+    // UPDATE от сотрудника, а diffLines про staff_files не знает.
     const docs: Array<{ url?: string; name?: string }> = Array.isArray(rec.staff_files) ? rec.staff_files : [];
     const alreadySent = Number(rec.client_docs_notified ?? 0);
     const fresh = docs.slice(alreadySent).filter((d) => d && d.url);
 
-    if (fresh.length && rec.client_id) {
-      const { data: client } = await sb
-        .from("clients").select("telegram_id").eq("id", rec.client_id).maybeSingle();
-      if (!client || !client.telegram_id) return new Response("no telegram");
-
+    if (fresh.length && clientTg) {
       // Подпись только у первого файла — иначе один и тот же текст повторится
       // под каждым вложением. Пишем её так, чтобы пересылка поставщику была
       // самодостаточной: из сообщения понятно, что за платёж и что он прошёл.
       const caption = `✅ Платёж «${esc(rec.payee)}» на ${fmtMoney(Number(rec.amount))} оплачен.`
         + `\n📄 Во вложении — платёжный документ.`
-        + await firmSuffix(client.telegram_id, rec.client);
+        + await firmSuffix(clientTg, rec.client);
 
       let sent = 0;
       for (const d of fresh) {
-        const ok = await tgDocument(client.telegram_id, d.url!, d.name || "документ", sent === 0 ? caption : undefined);
+        const ok = await tgDocument(clientTg, d.url!, d.name || "документ",
+                                    sent === 0 ? caption : undefined, rec.id);
         if (!ok) break;   // не дошёл — счётчик не двигаем, при следующем касании допошлём
         sent++;
       }
 
       if (sent > 0) {
-        await sb.from("payments").update({
-          client_docs_notified: alreadySent + sent,
-          // документ ушёл — текстовое «документ отправлен» теперь только дублировало бы
-          client_sent_notified: true,
-        }).eq("id", rec.id);
+        patch.client_docs_notified = alreadySent + sent;
+        // документ ушёл — текстовое «документ отправлен» теперь только дублировало бы
+        patch.client_sent_notified = true;
+        done.push("документ");
       }
-      return new Response("ok");
     }
 
     // ---------- 0.5. переписка по заявке ----------
@@ -207,17 +310,12 @@ serve(async (req) => {
       const hasForStaff  = thread.slice(fromStaff).some((m) => m && m.who === "client");
 
       if (hasForClient || hasForStaff) {
-        const patch: Record<string, unknown> = {};
-
         // сообщение бухгалтера → клиенту, с кнопкой «Ответить» под ним
-        if (hasForClient && rec.client_id) {
-          const { data: client } = await sb
-            .from("clients").select("telegram_id").eq("id", rec.client_id).maybeSingle();
-
+        if (hasForClient) {
           // Не привязан к боту — индекс НЕ двигаем: привяжется, и вопрос дойдёт.
           // Пока же он виден ему в кабинете, туда сообщение попало сразу.
-          if (client && client.telegram_id) {
-            const suffix = await firmSuffix(client.telegram_id, rec.client);
+          if (clientTg) {
+            const suffix = await firmSuffix(clientTg, rec.client);
             const card = `💳 ${esc(rec.payee)} · ${fmtMoney(Number(rec.amount))} · ${fmtDate(String(rec.due))}`;
             let i = fromClient;
             for (; i < thread.length; i++) {
@@ -226,12 +324,13 @@ serve(async (req) => {
               const head = m.kind === "reminder"
                 ? "🔔 <b>Напоминание от бухгалтера</b>"
                 : "❗ <b>Бухгалтер спрашивает по вашей заявке</b>";
-              const ok = await tg(client.telegram_id,
+              const ok = await tg(clientTg,
                 `${head}\n\n${card}\n\n${esc(m.text)}${suffix}`,
-                [[{ text: "✍️ Ответить", callback_data: `reply:${rec.id}` }]]);
+                [[{ text: "✍️ Ответить", callback_data: `reply:${rec.id}` }]],
+                "переписка → клиенту", rec.id);
               if (!ok) break;
             }
-            if (i > fromClient) patch.client_thread_notified = i;
+            if (i > fromClient) { patch.client_thread_notified = i; done.push("вопрос клиенту"); }
           }
         }
 
@@ -252,16 +351,12 @@ serve(async (req) => {
             const text = `💬 <b>Клиент ответил по заявке</b>\n\n${card}\n\n`
                        + (m.text ? `«${esc(m.text)}»` : "<i>без текста</i>")
                        + (files ? `\n\n${files}` : "");
-            const results = await Promise.all(STAFF_CHATS.map((chat) => tg(chat, text)));
+            const results = await Promise.all(
+              STAFF_CHATS.map((chat) => tg(chat, text, undefined, "переписка → бухгалтерам", rec.id)));
             if (!results.some(Boolean)) break;   // не дошло вообще никому — повторим позже
           }
-          if (i > fromStaff) patch.staff_thread_notified = i;
+          if (i > fromStaff) { patch.staff_thread_notified = i; done.push("ответ бухгалтерам"); }
         }
-
-        if (Object.keys(patch).length) {
-          await sb.from("payments").update(patch).eq("id", rec.id);
-        }
-        return new Response("ok");
       }
     }
 
@@ -273,57 +368,68 @@ serve(async (req) => {
       text = `✅ Ваш платёж «${esc(rec.payee)}» на ${fmtMoney(Number(rec.amount))} оплачен.`
            + (rec.need_receipt ? "\n📄 Готовим платёжный документ." : "");
       flagField = "client_paid_notified";
-    } else if (rec.status === "sent" && old.status !== "sent" && !rec.client_sent_notified) {
+    } else if (rec.status === "sent" && old.status !== "sent" && !rec.client_sent_notified
+               && !patch.client_sent_notified && rec.need_receipt) {
+      // M1.5: «документ отправлен» уместно, только если документ вообще просили.
+      // У заявки с need_receipt = false кнопка «Закрыть» — внутреннее действие
+      // бухгалтера, а клиент получал «📄 Платёжный документ отправлен» и шёл
+      // искать документ, которого нет и не было.
+      //
+      // Проверка patch.client_sent_notified — про случай, когда документ ушёл
+      // вложением прямо в этом же вызове: текст был бы дубликатом.
       text = `📄 Платёжный документ по «${esc(rec.payee)}» отправлен.`;
       flagField = "client_sent_notified";
     }
 
-    if (text && flagField && rec.client_id) {
-      const { data: client } = await sb
-        .from("clients").select("telegram_id").eq("id", rec.client_id).maybeSingle();
-      if (!client || !client.telegram_id) return new Response("no telegram");
-
-      text += await firmSuffix(client.telegram_id, rec.client);
+    if (text && flagField && clientTg) {
+      text += await firmSuffix(clientTg, rec.client);
 
       // флаг ставим только после успешной отправки — иначе уведомление потеряется
       // навсегда: повторно оно уже не уйдёт
-      if (await tg(client.telegram_id, text)) {
-        await sb.from("payments").update({ [flagField]: true }).eq("id", rec.id);
+      if (await tg(clientTg, text, undefined, "статус", rec.id)) {
+        patch[flagField] = true;
+        done.push("статус");
       }
-      return new Response("ok");
     }
 
     // ---------- 2. правка заявки ----------
     // Направление определяет БД: last_edit_role проставляет триггер по JWT,
     // подделать его из браузера нельзя.
     const changes = diffLines(old, rec);
-    if (changes.length === 0) return new Response("skip");
+    if (changes.length) {
+      // правил сотрудник → сообщаем клиенту, но только про ЕГО собственную заявку:
+      // заявки, заведённые бухгалтером, клиент и так не редактирует
+      if (rec.last_edit_role === "authenticated" && !rec.created_by_staff && clientTg) {
+        await tg(clientTg,
+          `✏️ Бухгалтер изменил вашу заявку «${esc(rec.payee)}»:\n\n` + changes.join("\n") +
+          await firmSuffix(clientTg, rec.client), undefined, "правка → клиенту", rec.id);
+        done.push("правка");
 
-    // правил сотрудник → сообщаем клиенту, но только про ЕГО собственную заявку:
-    // заявки, заведённые бухгалтером, клиент и так не редактирует
-    if (rec.last_edit_role === "authenticated" && !rec.created_by_staff && rec.client_id) {
-      const { data: client } = await sb
-        .from("clients").select("telegram_id").eq("id", rec.client_id).maybeSingle();
-      if (!client || !client.telegram_id) return new Response("no telegram");
-
-      await tg(client.telegram_id,
-        `✏️ Бухгалтер изменил вашу заявку «${esc(rec.payee)}»:\n\n` + changes.join("\n") +
-        await firmSuffix(client.telegram_id, rec.client));
-      return new Response("ok");
+      // правил клиент → сообщаем бухгалтерам
+      } else if (rec.last_edit_role === "anon" && STAFF_CHATS.length) {
+        const head = `✏️ <b>Клиент изменил заявку</b>\n\n`
+                   + `👤 ${esc(rec.client)}\n`
+                   + `💳 ${esc(rec.payee)} · ${fmtMoney(Number(rec.amount))} · ${fmtDate(String(rec.due))}\n\n`;
+        await Promise.all(STAFF_CHATS.map((chat) =>
+          tg(chat, head + changes.join("\n"), undefined, "правка → бухгалтерам", rec.id)));
+        done.push("правка");
+      }
     }
 
-    // правил клиент → сообщаем бухгалтерам
-    if (rec.last_edit_role === "anon" && STAFF_CHATS.length) {
-      const head = `✏️ <b>Клиент изменил заявку</b>\n\n`
-                 + `👤 ${esc(rec.client)}\n`
-                 + `💳 ${esc(rec.payee)} · ${fmtMoney(Number(rec.amount))} · ${fmtDate(String(rec.due))}\n\n`;
-      await Promise.all(STAFF_CHATS.map((chat) => tg(chat, head + changes.join("\n"))));
-      return new Response("ok");
-    }
+    // Одно обновление на весь вызов — значит и повторный вебхук будет один.
+    // На повторе все ветки промолчат: в patch лежат только счётчики и флаги
+    // уведомлений, а diffLines про них не знает.
+    await flush();
 
-    return new Response("skip");
+    return new Response(done.length ? `ok: ${done.join(", ")}` : "skip");
   } catch (e) {
     console.error(e);
+    await logFailure("вызов целиком", paymentId, null,
+      `исключение: ${e instanceof Error ? e.message : String(e)}`);
+    // Что успели доставить — обязаны записать даже на исключении. Иначе
+    // счётчики останутся на месте, и при следующем касании заявки клиент
+    // получит те же сообщения второй раз.
+    await flush();
     return new Response("ok");
   }
 });

@@ -23,6 +23,9 @@ env:
   APP_URL:  https://nikchyv.github.io/payments_new/app/
   SB_REST:  https://gmvhphuabiyggfurfhmc.supabase.co/rest/v1/
   SB_BOTFN: https://gmvhphuabiyggfurfhmc.supabase.co/functions/v1/telegram-bot
+  # Публичный ключ фронта — он и так лежит в app/js/config.js. Секретом не
+  # является: доступ решают RLS и проверки внутри RPC.
+  SB_PUBKEY: sb_publishable_Vce6cWOwY9G4w-bt9cGsRw_h4YoFR-s
 
 jobs:
   check:
@@ -72,6 +75,26 @@ jobs:
               PROBLEMS="${PROBLEMS}• В очереди бота застряло ${PEND} сообщений"$'\n'
             fi
           fi
+
+          # 5) доставка уведомлений: сколько отправок сорвалось за сутки
+          #
+          # Раньше сторож проверял, что бот ЖИВ, но не что сообщения ДОХОДЯТ —
+          # инцидент «клиент месяц без уведомлений» им бы не поймался (M4.4).
+          # Функции пишут каждую осечку в notify_failures, здесь читаем только
+          # счётчик: notify_failures_recent отдаёт число и ничего больше,
+          # поэтому её можно звать публичным ключом, который и так лежит во
+          # фронте. Доступ к самим записям наружу не открывается.
+          FAILS=$(curl -sS --max-time 20 -X POST "${SB_REST}rpc/notify_failures_recent" \
+                    -H "apikey: ${SB_PUBKEY}" -H "Authorization: Bearer ${SB_PUBKEY}" \
+                    -H "Content-Type: application/json" -d '{"p_hours":24}' || echo "")
+          case "$FAILS" in
+            ''|*[!0-9]*)
+              PROBLEMS="${PROBLEMS}• Не удалось прочитать счётчик отказов доставки (ответ: ${FAILS:-пусто})"$'\n' ;;
+            *)
+              if [ "$FAILS" -gt 0 ]; then
+                PROBLEMS="${PROBLEMS}• Уведомления не доходят: за сутки сорвалось ${FAILS} отправок. Смотреть select * from notify_failures order by at desc"$'\n'
+              fi ;;
+          esac
 
           if [ -n "$PROBLEMS" ]; then
             echo "status=fail" >> "$GITHUB_OUTPUT"

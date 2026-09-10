@@ -23,7 +23,7 @@ $env:Path = "$env:USERPROFILE\scoop\shims;$env:Path"     # supabase
 cd c:\Payment-automation-system\payments
 supabase start        # поднять локальный стек
 supabase db reset     # пересобрать БД с нуля: миграции + seed
-supabase test db      # прогнать тесты (ожидается 206 PASS)
+supabase test db      # прогнать тесты (ожидается 222 PASS)
 supabase stop         # остановить (данные сохраняются в docker volume)
 ```
 
@@ -76,9 +76,18 @@ git push                                      # 3. фронт -> GitHub Pages
 После пуша фронта Pages обновляется 1–2 минуты.
 
 ### 2.3 Ручные шаги (вне миграций)
-- **`send_daily_reminder`** — в проде хранит реальный токен внутри тела. Если
-  миграция его перезаписала плейсхолдером, восстановить из
-  `supabase/daily_reminder.sql`, подставив реальные значения.
+- **`send_daily_reminder`** — в проде хранит реальный токен внутри тела, поэтому
+  миграцией не правится. Меняли `supabase/daily_reminder.sql` — выполнить его в
+  SQL Editor, подставив токен и chat_id. Строго ПОСЛЕ `db push`: оболочка зовёт
+  `daily_reminder_message`, которая появляется миграцией.
+- **`staff.telegram_id`** — кому уходит утренняя рассылка. Заполняется руками:
+  ```sql
+  update staff set telegram_id = <chat_id> where name = 'Имя';
+  select name, telegram_id from staff;
+  ```
+  Пока пусто у всех — работает запасной путь по зашитым в функцию chat_id, и
+  личных задач в письме нет вовсе (их некому адресовать). Свой `chat_id` человек
+  узнаёт командой `/myid` у бота.
 
 ### 2.4 Смоук-тест после деплоя
 1. Открыть ссылку клиента `?t=<token>` — форма грузится, галочка «документ» снята.
@@ -223,8 +232,28 @@ https://api.telegram.org/bot<ТОКЕН>/setWebhook?url=https://gmvhphuabiyggfur
 > chat_id можно командой `/myid` в боте.
 
 ### 6.6 Не приходят уведомления
+
+**Начинать отсюда — журнал отказов.** Каждая неудачная отправка пишется в
+`notify_failures` с веткой, заявкой, чатом и ответом Telegram. Это быстрее
+любых логов и покрывает случай «всё выглядит рабочим, а сообщения не идут»:
+
+```sql
+select at, fn, branch, payment_id, chat_id, detail
+from notify_failures order by at desc limit 50;
+```
+
+Пусто, а жалобы есть — значит функция вообще не вызывалась: смотреть Database
+Webhooks и логи функции. `health.yml` краснеет сам, если за сутки был хоть один
+отказ (`notify_failures_recent(24)`).
+
+Разобрали инцидент — записи можно почистить, чтобы сторож позеленел:
+`delete from notify_failures where at < now() - interval '1 day';`
+
 - **О новой заявке** — проверить Database Webhook на INSERT `payments` и логи
   `notify-payment`.
+- **Утренняя рассылка не пришла кому-то одному** — у него не проставлен
+  `staff.telegram_id`: `select name, telegram_id from staff;`. Пока колонка
+  пуста у всех, работает запасной путь по зашитым в функцию chat_id.
 - **Клиенту об оплате** — первым делом проверить привязку:
   ```sql
   select name, telegram_id from clients where name ilike '%часть названия%';

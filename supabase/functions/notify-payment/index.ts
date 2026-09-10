@@ -1,8 +1,21 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const BOT   = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
+// Нужен только ради журнала отказов. SB_SECRET_KEY — новый ключ,
+// SUPABASE_SERVICE_ROLE_KEY — legacy, который платформа подставляет сама.
+const sb = createClient(
+  Deno.env.get("SUPABASE_URL")!,
+  Deno.env.get("SB_SECRET_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+);
+
+const BOT   = Deno.env.get("TELEGRAM_BOT_TOKEN") ?? "";
 // TELEGRAM_CHAT_ID — один или несколько chat_id через запятую, напр. "111,222"
-const CHATS = Deno.env.get("TELEGRAM_CHAT_ID")!.split(",").map(s => s.trim()).filter(Boolean);
+//
+// Читаем через ?? "", а не через `!`: восклицательный знак — это обещание
+// компилятору, а не проверка. Пропади секрет — функция падала прямо на импорте
+// с невнятным 500 и не успевала даже записать отказ в журнал. Ровно тот класс
+// тихой поломки, из-за которого заведён notify_failures (M4.4).
+const CHATS = (Deno.env.get("TELEGRAM_CHAT_ID") ?? "").split(",").map(s => s.trim()).filter(Boolean);
 
 // Кто имеет право дёргать эту функцию. Verify JWT принимает любой валидный ключ
 // проекта, включая публичный из фронта, — то есть без своей проверки кто угодно
@@ -12,6 +25,22 @@ const WEBHOOK_SECRET = Deno.env.get("WEBHOOK_SECRET") ?? "";
 function fromWebhook(req: Request) {
   if (!WEBHOOK_SECRET) return true;
   return req.headers.get("x-webhook-secret") === WEBHOOK_SECRET;
+}
+
+// Неудачная отправка — в журнал, а не только в консоль. У Database Webhooks
+// нет ретраев, console.error никто не читает, и уведомление просто исчезает.
+// Сам журнал падать не имеет права.
+async function logFailure(branch: string, paymentId: unknown, chatId: unknown, detail: string) {
+  try {
+    await sb.from("notify_failures").insert({
+      fn: "notify-payment", branch,
+      payment_id: paymentId == null ? null : String(paymentId),
+      chat_id: chatId == null ? null : String(chatId),
+      detail: detail.slice(0, 2000),
+    });
+  } catch (e) {
+    console.error("не записался notify_failures:", e);
+  }
 }
 
 const months = ["янв","фев","мар","апр","мая","июн","июл","авг","сен","окт","ноя","дек"];
@@ -46,6 +75,14 @@ serve(async (req) => {
   try {
     const { record } = await req.json();
     if (!record) return new Response("no record", { status: 400 });
+
+    // Некому слать — это поломка настройки, а не «нечего делать»: заявка есть,
+    // а бухгалтеры о ней не узнают. Пишем в журнал, иначе снова тихо.
+    if (!CHATS.length || !BOT) {
+      await logFailure("новая заявка", record.id, null,
+        !BOT ? "не задан TELEGRAM_BOT_TOKEN" : "не задан TELEGRAM_CHAT_ID");
+      return new Response("not configured", { status: 500 });
+    }
 
     // следующая копия повторяющегося платежа создаётся системой после «Оплачено» —
     // клиент такую заявку не подавал, уведомлять о ней не нужно
@@ -82,7 +119,13 @@ serve(async (req) => {
           disable_web_page_preview: true,
         }),
       });
-      if (!res.ok) console.error(`Telegram error for ${chat}:`, await res.text());
+      if (!res.ok) {
+        // Без этой записи бухгалтеры просто не узнали бы о заявке, и никто бы
+        // этого не заметил (M4.4).
+        const detail = await res.text();
+        console.error(`Telegram error for ${chat}:`, detail);
+        await logFailure("новая заявка", record.id, chat, `${res.status} ${detail}`);
+      }
     }));
 
     return new Response("ok");
