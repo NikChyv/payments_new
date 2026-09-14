@@ -91,6 +91,33 @@ check "ИП Смирнов,ООО «Ромашка»" "голый /start без 
 send "/start etogo-tokena-net"
 check "ИП Смирнов,ООО «Ромашка»" "неверный токен при двух фирмах — обе на месте"
 
+# M5.1 (сентябрь 2026): ссылку уже привязанной фирмы открывает ДРУГОЙ человек —
+# коллега, пересланное сообщение, утечка. Перепривязку не запрещаем (сменить
+# телефон — законно), но прежний владелец обязан об этом узнать: раньше он молча
+# переставал получать уведомления. Сам факт предупреждения здесь не проверить —
+# Telegram фиктивный, — его видно в логе функции строкой
+# «Telegram sendMessage 555001». Здесь проверяем, что перепривязка задела
+# ровно одну фирму и не тронула вторую фирму прежнего владельца.
+OTHER=555002
+send_from() { # $1 = chat, $2 = текст
+  curl -s -o /dev/null -X POST "$URL" \
+    -H "content-type: application/json" \
+    -H "x-telegram-bot-api-secret-token: $SECRET" \
+    -d "{\"message\":{\"chat\":{\"id\":$1},\"from\":{\"id\":$1},\"text\":\"$2\"}}"
+  sleep 2
+}
+
+send_from "$OTHER" "/start demotoken1"
+check "ИП Смирнов" "чужой /start по ссылке «Ромашки» — у прежнего владельца осталась только его вторая фирма"
+other_has=$("$DOCKER" exec -i "$CT" psql -U postgres -d postgres -tAq \
+  -c "select coalesce(string_agg(name, ','), '') from clients where telegram_id = $OTHER;" | tr -d '\r')
+if [ "$other_has" = "ООО «Ромашка»" ]; then
+  echo "  ok   — «Ромашка» перешла к новому человеку"
+else
+  echo "  FAIL — у нового чата «$other_has», ожидали «ООО «Ромашка»»"
+  fails=$((fails + 1))
+fi
+
 echo
 if [ "$fails" -eq 0 ]; then echo "Все проверки пройдены."; else echo "Провалено проверок: $fails"; fi
 exit $fails

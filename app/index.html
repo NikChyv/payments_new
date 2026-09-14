@@ -255,7 +255,22 @@
 
 <div id="toast"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!--
+  supabase-js — точная версия и проверка целостности (M6.7).
+  Было `@2`: любой новый релиз молча менял поведение без коммита, а подмена
+  файла на CDN давала чужому коду полный доступ к сессии бухгалтера. Теперь
+  браузер откажется выполнять файл, если хоть один байт не совпадёт.
+
+  Ссылка — на файл из самого npm-пакета, а не на голый адрес пакета: голый
+  jsdelivr минифицирует на лету, и хеш у него однажды может разъехаться —
+  тогда приложение перестанет грузиться у всех. Обновлять так:
+    curl -s https://cdn.jsdelivr.net/npm/@supabase/supabase-js@<версия>/dist/umd/supabase.js \
+      | openssl dgst -sha384 -binary | openssl base64 -A
+  и подставить версию и хеш ниже.
+-->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.js"
+        integrity="sha384-iLddHTLokph6Omwoyid4XKxHaWa6w41BnoEj0q5oOrzmYPpHIKt1wyjReA7s//pP"
+        crossorigin="anonymous"></script>
 <script type="module" src="js/main.js"></script>
 </body>
 </html>

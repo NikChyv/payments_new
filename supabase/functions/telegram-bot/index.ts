@@ -18,6 +18,15 @@ const sb = createClient(
 const months = ["янв","фев","мар","апр","мая","июн","июл","авг","сен","окт","ноя","дек"];
 const recLbl: Record<string, string> = {once:"Разовый", weekly:"Еженедельно", monthly:"Ежемесячно"};
 
+// Все сообщения уходят с parse_mode: HTML, а получателя, назначение, реквизиты,
+// имя файла и название фирмы пишет человек. Без экранирования `<` в названии
+// получателя ломал разметку, и Telegram отказывался принимать сообщение целиком:
+// экран подтверждения не приходил, человек застревал на шаге без кнопок и не
+// понимал, что делать (M5.3). Та же функция, что в notify-client.
+function esc(s: unknown) {
+  return String(s ?? "").replace(/[&<>]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]!));
+}
+
 function fmtDate(iso: string) {
   const [y, m, d] = iso.split("-");
   return `${parseInt(d)} ${months[parseInt(m) - 1]} ${y}`;
@@ -65,19 +74,42 @@ function parseDate(s: string): string | null {
 
 // ---------- Telegram API ----------
 
-async function send(chatId: number, text: string, keyboard?: unknown) {
+// Ответ бота. Раньше результат не смотрели вовсе: отказ Telegram (битая разметка,
+// заблокированный бот) проходил молча, и в логах функции не оставалось ничего,
+// по чему можно понять, почему человек «ничего не получил». Теперь отказ виден,
+// а сетевая ошибка не роняет обработку апдейта целиком — fetch при ней бросает.
+//
+// В notify_failures ответы бота не пишем намеренно: это диалог, человек сидит
+// в чате и повторит команду сам, а health.yml краснел бы от каждого, кто
+// заблокировал бота посреди разговора.
+async function send(chatId: number, text: string, keyboard?: unknown): Promise<boolean> {
   const body: Record<string, unknown> = {
     chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true,
   };
   if (keyboard) body.reply_markup = { inline_keyboard: keyboard };
-  await fetch(`https://api.telegram.org/bot${BOT}/sendMessage`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  });
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT}/sendMessage`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    if (!res.ok) console.error(`Telegram sendMessage ${chatId}: ${res.status} ${await res.text()}`);
+    return res.ok;
+  } catch (e) {
+    console.error(`Telegram недоступен (${chatId}):`, e);
+    return false;
+  }
 }
+
+// Подтверждение нажатия кнопки. Зовётся ДО обработки нажатия, поэтому бросать
+// не имеет права: сетевая ошибка здесь съела бы само действие — «Подтвердить»
+// не создало бы заявку.
 async function answerCallback(id: string) {
-  await fetch(`https://api.telegram.org/bot${BOT}/answerCallbackQuery`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ callback_query_id: id }),
-  });
+  try {
+    await fetch(`https://api.telegram.org/bot${BOT}/answerCallbackQuery`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ callback_query_id: id }),
+    });
+  } catch (e) {
+    console.error("answerCallbackQuery:", e);
+  }
 }
 
 const KB = {
@@ -146,7 +178,7 @@ const NOT_BOUND = "Вы ещё не привязаны. Откройте пер�
 // честно отправляем такого человека на персональную ссылку. Сами ссылки в чат
 // не пишем — токен в переписке остаётся навсегда, а у клиента они уже есть.
 function manyFirms(list: ClientRow[]) {
-  return "У вас привязано несколько фирм: " + list.map((c) => `«${c.name}»`).join(", ") + ".\n\n" +
+  return "У вас привязано несколько фирм: " + list.map((c) => `«${esc(c.name)}»`).join(", ") + ".\n\n" +
     "✅ Уведомления об оплате приходят по всем — делать ничего не нужно.\n\n" +
     "А вот новую заявку через бота я принять не могу: не пойму, от какой фирмы она. " +
     "Откройте персональную ссылку нужной фирмы — ту, что присылал бухгалтер, — и заведите заявку там.";
@@ -163,10 +195,10 @@ async function sendPayments(chatId: number, list: ClientRow[]) {
   if (!items || items.length === 0) { await send(chatId, "Активных платежей нет. 🎉"); return; }
 
   const line = (it: any, i: number) =>
-    `${i + 1}. <b>${it.payee}</b> — ${fmtMoney(it.amount)}\n   📅 ${fmtDate(it.due)} · ${statusLabel(it.status)}`;
+    `${i + 1}. <b>${esc(it.payee)}</b> — ${fmtMoney(it.amount)}\n   📅 ${fmtDate(it.due)} · ${statusLabel(it.status)}`;
 
   if (list.length === 1) {
-    await send(chatId, `<b>Ваши платежи (${list[0].name})</b>\n\n` + items.map(line).join("\n\n"));
+    await send(chatId, `<b>Ваши платежи (${esc(list[0].name)})</b>\n\n` + items.map(line).join("\n\n"));
     return;
   }
 
@@ -174,7 +206,7 @@ async function sendPayments(chatId: number, list: ClientRow[]) {
   for (const c of list) {
     const own = items.filter((it: any) => it.client_id === c.id);
     if (!own.length) continue;
-    blocks.push(`<b>${c.name}</b>\n\n` + own.map(line).join("\n\n"));
+    blocks.push(`<b>${esc(c.name)}</b>\n\n` + own.map(line).join("\n\n"));
   }
   await send(chatId, "<b>Ваши платежи</b>\n\n" + blocks.join("\n\n———\n\n"));
 }
@@ -244,14 +276,14 @@ async function uploadTelegramFile(
 function summary(d: Draft) {
   return [
     "<b>Проверьте заявку:</b>", "",
-    `💳 Кому: ${d.payee}`,
+    `💳 Кому: ${esc(d.payee)}`,
     `💰 Сумма: ${fmtMoney(d.amount as number)}`,
-    d.requisites ? `🔢 Реквизиты: ${d.requisites}` : null,
+    d.requisites ? `🔢 Реквизиты: ${esc(d.requisites)}` : null,
     `📅 Дата: ${fmtDate(d.due as string)}`,
-    `🔁 Периодичность: ${recLbl[d.recurrence as string] || d.recurrence}`,
-    d.purpose ? `📝 Назначение: ${d.purpose}` : null,
+    `🔁 Периодичность: ${esc(recLbl[d.recurrence as string] || d.recurrence)}`,
+    d.purpose ? `📝 Назначение: ${esc(d.purpose)}` : null,
     `🧾 Документ после оплаты: ${d.need_receipt ? "да" : "нет"}`,
-    d.file_name ? `📎 Файл: ${d.file_name}` : "📎 Файл: нет",
+    d.file_name ? `📎 Файл: ${esc(d.file_name)}` : "📎 Файл: нет",
   ].filter(x => x !== null).join("\n");
 }
 
@@ -326,7 +358,7 @@ async function sendReply(
     // показываем настоящую причину (закрытая заявка, лимит частоты и т.п.)
     const why = (error as {message?: string}).message || "";
     await send(chatId, why
-      ? `Не получилось отправить: ${why}`
+      ? `Не получилось отправить: ${esc(why)}`
       : "Не получилось отправить ответ. Попробуйте ещё раз.");
     return;
   }
@@ -349,17 +381,31 @@ async function submit(chatId: number, tgId: number, token: string, d: Draft) {
     p_file_url:     d.file_url ?? null,
     p_file_name:    d.file_name ?? null,
   });
-  await clearSession(tgId);
+
   if (error) {
     console.error(error);
-    // показываем настоящую причину (выходной, лимит частоты и т.п.)
+    // M5.4: черновик НЕ стираем. Раньше сессия чистилась до проверки
+    // результата, и лимит частоты или временная ошибка базы уничтожали заявку,
+    // которую человек набивал восемь шагов, — «попробуйте ещё раз: /new» с нуля.
+    // Оставляем его на экране подтверждения: повторить можно одной кнопкой.
+    //
+    // Если причина неустранимая (дата на выходной), повтор честно упадёт с той
+    // же причиной, и человек отменит сам — это всё равно лучше, чем потерять.
+    // Ошибка от самой базы значит, что заявка не записалась: submit_payment
+    // пишет одной транзакцией. Остаётся редкий случай, когда связь оборвалась
+    // уже ПОСЛЕ записи, — тогда повтор создаст дубль. Он будет виден в очереди,
+    // а потерянная заявка не видна никому, поэтому выбираем дубль.
+    await setSession(tgId, "confirm", d);
     const why = (error as {message?: string}).message || "";
-    await send(chatId, why
-      ? `Не удалось создать заявку: ${why}\n\nПопробуйте ещё раз: /new`
-      : "Не удалось создать заявку. Попробуйте ещё раз: /new");
-  } else {
-    await send(chatId, `✅ Заявка отправлена бухгалтеру. Платёж «${d.payee}» на ${fmtDate(d.due as string)} в очереди.\n\nПосмотреть статус: /payments`);
+    await send(chatId,
+      (why ? `Не удалось создать заявку: ${esc(why)}` : "Не удалось создать заявку.") +
+      "\n\nЧерновик сохранён — нажмите «Подтвердить», чтобы попробовать ещё раз, или отмените.",
+      KB.confirm);
+    return;
   }
+
+  await clearSession(tgId);
+  await send(chatId, `✅ Заявка отправлена бухгалтеру. Платёж «${esc(d.payee)}» на ${fmtDate(d.due as string)} в очереди.\n\nПосмотреть статус: /payments`);
 }
 
 // ---------- обработчики ----------
@@ -434,7 +480,7 @@ async function handleMessage(msg: any) {
     // клиента уведомления пропали почти на месяц, и заметил это только он сам.
     // Поэтому: сперва убеждаемся, что токен живой, и лишь затем трогаем привязки.
     const { data: target, error: findErr } = await sb
-      .from("clients").select("id,name").eq("token", token).maybeSingle();
+      .from("clients").select("id,name,telegram_id").eq("token", token).maybeSingle();
 
     if (findErr || !target) {
       await send(chatId, "Ссылка недействительна. Обратитесь к бухгалтеру.\n\nПрежняя привязка сохранена — уведомления продолжат приходить.");
@@ -454,15 +500,35 @@ async function handleMessage(msg: any) {
       return;
     }
 
+    // M5.1. У фирмы одна привязка, и новый /start по той же ссылке её
+    // перезаписывает. Раньше прежний человек ни о чём не узнавал: коллега
+    // директора, пересланное сообщение или утёкшая ссылка — и директор молча
+    // переставал получать «оплачено» и документы, а получал их кто-то другой.
+    // Это тот же класс, что инцидент «месяц без уведомлений», только с другой
+    // стороны.
+    //
+    // Перепривязку не запрещаем и подтверждения не спрашиваем: сменить телефон
+    // или передать фирму коллеге — законное дело, и держать человека без
+    // уведомлений до ответа прежнего владельца было бы хуже. Но прежний владелец
+    // обязан узнать, что это произошло, — тогда утечку ссылки заметят за минуту,
+    // а не через месяц.
+    if (target.telegram_id && Number(target.telegram_id) !== chatId) {
+      await send(Number(target.telegram_id),
+        `⚠️ Фирма «${esc(target.name)}» привязана к другому аккаунту Telegram.\n\n` +
+        "Уведомления по ней теперь приходят туда, а сюда больше не придут.\n\n" +
+        "Если это сделали не вы или не по вашей просьбе — сообщите бухгалтеру: " +
+        "он перевыпустит ссылку, и чужая привязка отпадёт.");
+    }
+
     const list = await getClients(chatId);
     if (list.length > 1) {
       await send(chatId,
-        `Готово! Фирма «${target.name}» привязана.\n\n` +
+        `Готово! Фирма «${esc(target.name)}» привязана.\n\n` +
         `Теперь уведомления приходят по ${list.length} фирмам: ` +
-        list.map((c) => `«${c.name}»`).join(", ") + ".\n\n" +
+        list.map((c) => `«${esc(c.name)}»`).join(", ") + ".\n\n" +
         "Заявки заводите по персональной ссылке нужной фирмы — так она точно не уйдёт не на ту компанию.");
     } else {
-      await send(chatId, `Готово! Аккаунт «${target.name}» привязан.\n\n${HELP}`);
+      await send(chatId, `Готово! Аккаунт «${esc(target.name)}» привязан.\n\n${HELP}`);
     }
     return;
   }
@@ -549,7 +615,7 @@ async function handleCallback(cq: any) {
 
     await setSession(tgId, "reply", { pid: pay.id, token: own.token, payee: pay.payee });
     await send(chatId,
-      `✍️ Напишите ответ по заявке «${pay.payee}» — текстом, файлом или тем и другим сразу.\n\n` +
+      `✍️ Напишите ответ по заявке «${esc(pay.payee)}» — текстом, файлом или тем и другим сразу.\n\n` +
       "Фото или PDF счёта можно прислать прямо сюда. Передумали — /cancel");
     return;
   }
