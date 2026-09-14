@@ -23,7 +23,7 @@ $env:Path = "$env:USERPROFILE\scoop\shims;$env:Path"     # supabase
 cd c:\Payment-automation-system\payments
 supabase start        # поднять локальный стек
 supabase db reset     # пересобрать БД с нуля: миграции + seed
-supabase test db      # прогнать тесты (ожидается 222 PASS)
+supabase test db      # прогнать тесты (ожидается 239 PASS)
 supabase stop         # остановить (данные сохраняются в docker volume)
 ```
 
@@ -80,18 +80,20 @@ git push                                      # 3. фронт -> GitHub Pages
   миграцией не правится. Меняли `supabase/daily_reminder.sql` — выполнить его в
   SQL Editor, подставив токен и chat_id. Строго ПОСЛЕ `db push`: оболочка зовёт
   `daily_reminder_message`, которая появляется миграцией.
-- **`staff.telegram_id`** — кому уходит утренняя рассылка. Заполняется руками:
+- **`staff.telegram_id`** — единственное место, где живут номера сотрудников.
+  С 14.09 отсюда берут адресатов и мгновенные уведомления («новая заявка»,
+  «клиент ответил», «клиент изменил»), и утреннее письмо. Заполняется руками, по
+  id — так надёжнее, чем по имени:
   ```sql
-  update staff set telegram_id = <chat_id> where name = 'Имя';
-  select name, telegram_id from staff;
+  update staff set telegram_id = <chat_id> where id = '<uid>';
+  select id, name, is_admin, telegram_id from staff;
   ```
-  Пока пусто у всех — работает запасной путь по зашитым в функцию chat_id, и
-  личных задач в письме нет вовсе (их некому адресовать). Свой `chat_id` человек
-  узнаёт командой `/myid` у бота.
+  Свой `chat_id` человек узнаёт командой `/myid` у бота. Секрет
+  `TELEGRAM_CHAT_ID` у Edge Functions больше не читается — можно не трогать.
 
 ### 2.4 Смоук-тест после деплоя
 1. Открыть ссылку клиента `?t=<token>` — форма грузится, галочка «документ» снята.
-2. Создать заявку → бухгалтерам пришло «новая заявка».
+2. Создать заявку → «новая заявка» пришла **бухгалтеру этого клиента и админу**, другим бухгалтерам — нет.
 3. На новой заявке видна «✏️ Редактировать» → правка сохраняется.
 4. В боте `/payments` — заявка видна.
 5. Бухгалтер жмёт «Оплачено» → клиенту в бот пришло «✅ оплачено» (один раз).
@@ -251,9 +253,13 @@ Webhooks и логи функции. `health.yml` краснеет сам, ес�
 
 - **О новой заявке** — проверить Database Webhook на INSERT `payments` и логи
   `notify-payment`.
-- **Утренняя рассылка не пришла кому-то одному** — у него не проставлен
-  `staff.telegram_id`: `select name, telegram_id from staff;`. Пока колонка
-  пуста у всех, работает запасной путь по зашитым в функцию chat_id.
+- **Бухгалтеру не приходят уведомления по его клиентам** — у него не проставлен
+  `staff.telegram_id`, и они уходят только админу. В журнале это видно сразу:
+  запись «у бухгалтера «Имя» не указан telegram_id». Проверить и починить:
+  `select name, telegram_id from staff;` → `update staff set telegram_id = …`.
+- **Уведомление пришло не тому бухгалтеру** — у клиента не тот `staff_id`:
+  `select c.name, s.name from clients c left join staff s on s.id = c.staff_id;`.
+  Уведомления идут бухгалтеру клиента и админам, больше никому.
 - **Клиенту об оплате** — первым делом проверить привязку:
   ```sql
   select name, telegram_id from clients where name ilike '%часть названия%';
@@ -301,7 +307,8 @@ Webhooks и логи функции. `health.yml` краснеет сам, ес�
 | **Выгрузить платежи в Excel** | экран «Клиенты» → «📊 Выгрузить в Excel» → период (по умолчанию текущий месяц) → «Скачать». Доступно бухгалтеру и админу; бухгалтер видит только своих клиентов |
 | **Ссылка для бота** | `https://t.me/paymentITNIMAX_bot?start=<токен>` (токен = часть после `?t=`) |
 | **Завести сотрудника** | Supabase → Auth → Add user → скопировать UID → `insert into staff (id, name, is_admin) values ('UID','Имя',false) on conflict (id) do nothing;` |
-| **Добавить получателя уведомлений** | его chat_id (`/myid` в боте) → в секрет `TELEGRAM_CHAT_ID` (через запятую) **и** в массив `chat_ids` в `send_daily_reminder` |
+| **Добавить получателя уведомлений** | его chat_id (`/myid` в боте) → `update staff set telegram_id = <chat_id> where id = '<uid>';`. Больше никуда: с 14.09 и мгновенные уведомления, и утреннее письмо берут номера только из `staff` |
+| **Передать клиента другому бухгалтеру** | `update clients set staff_id = '<uid бухгалтера>' where id = '<id клиента>';` — уведомления по клиенту сразу пойдут новому бухгалтеру (и админам) |
 | **Посмотреть историю платежа** | `select * from payments_audit where payment_id = '<id>' order by changed_at;` |
 | **Удалить файл из Storage** | только через Storage API, см. ниже |
 

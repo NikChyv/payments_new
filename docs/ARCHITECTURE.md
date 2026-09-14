@@ -71,7 +71,7 @@
 |---------|-----------|
 | `payments` | платёжные поручения; статусы `new → in_progress → paid → sent` |
 | `clients` | компании: имя, `token` (ссылка), `staff_id`, `telegram_id` |
-| `staff` | сотрудники; `id` = `auth.users.id`, флаг `is_admin` |
+| `staff` | сотрудники; `id` = `auth.users.id`, флаг `is_admin`, `telegram_id` — единственный источник номеров для уведомлений |
 | `tg_sessions` | состояние пошагового диалога бота (шаг + черновик jsonb) |
 | `payments_audit` | журнал: создание/удаление/смена статуса, кто и когда |
 | — | переписка по заявке лежит в `payments.thread` (jsonb), отдельной таблицы нет: `list_payments_by_token` возвращает `SETOF payments`, и она доезжает клиенту сама |
@@ -97,7 +97,7 @@
 
 | Функция | Триггер | Verify JWT | Что делает |
 |---------|---------|-----------|------------|
-| `notify-payment` | DB Webhook: INSERT `payments` | вкл | «новая заявка» бухгалтерам |
+| `notify-payment` | DB Webhook: INSERT `payments` | вкл | «новая заявка» бухгалтеру клиента и админам |
 | `notify-client` | DB Webhook: UPDATE `payments` | вкл | клиенту «оплачено»/«документ», ровно один раз (флаги); переписка по заявке в обе стороны |
 | `telegram-bot` | Telegram webhook | **выкл** | `/start`, `/payments`, `/new` (диалог), `/cancel`, `/myid`, ответ на вопрос бухгалтера |
 
@@ -123,7 +123,15 @@
 
 **Клиент создаёт заявку (веб или бот)**
 `submit_payment` → запись в `payments` → DB Webhook → `notify-payment` →
-Telegram бухгалтерам. Триггер аудита пишет `INSERT` в `payments_audit`.
+`notify_staff_chats(client_id)` → Telegram **бухгалтеру этого клиента и
+админам**. Триггер аудита пишет `INSERT` в `payments_audit`.
+
+**Кому из сотрудников уходит уведомление**
+Одно правило на «новую заявку», «клиент ответил», «клиент изменил» и утреннее
+письмо, живёт в базе (`notify_staff_chats`, `daily_reminder_message`): бухгалтер
+получает только своих клиентов (`clients.staff_id`), админ — всех; клиент без
+бухгалтера — админу; бухгалтер без `telegram_id` — админу плюс запись в
+`notify_failures`. Номера — только `staff.telegram_id`.
 
 **Бухгалтер проводит платёж**
 Смена статуса в очереди → точечный `update … where id = ? and status = ?`
@@ -135,7 +143,7 @@ Telegram бухгалтерам. Триггер аудита пишет `INSERT`
 `post_staff_message` (вопрос или напоминание) → запись в `payments.thread` →
 DB Webhook → `notify-client` → клиенту в бот с кнопкой «Ответить» и в кабинет.
 Ответ идёт `reply_by_token` (кабинет или бот) → сообщение в ту же переписку,
-файл — во вложения заявки → `notify-client` → в чат бухгалтеров. Счётчики
+файл — во вложения заявки → `notify-client` → бухгалтеру клиента и админам. Счётчики
 `client_thread_notified` / `staff_thread_notified` — индексы в переписке, не
 дошло — допошлём при следующем касании заявки.
 
@@ -160,7 +168,7 @@ supabase/
   config.toml            конфиг локального стека (порты 483xx)
   migrations/            схема БД по порядку (baseline + 18 миграций)
   functions/             исходники Edge Functions
-  tests/                 pgTAP: 222 теста в 16 файлах
+  tests/                 pgTAP: 239 тестов в 17 файлах
   seed.sql               демо-данные (только локально)
   daily_reminder.sql     утренняя рассылка (токен подставляется в проде)
 .github/workflows/
@@ -179,7 +187,9 @@ supabase/
 - **Database Webhooks** для `notify-payment` и `notify-client` — пересоздаются
   файлом `scripts/webhooks.sql` (значения ключей подставляются руками; в
   миграциях их быть не должно, см. инцидент 09.09.2026 в SECURITY.md);
-- **Секреты** функций (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TG_WEBHOOK_SECRET`);
+- **Секреты** функций (`TELEGRAM_BOT_TOKEN`, `TG_WEBHOOK_SECRET`, `SB_SECRET_KEY`,
+  `WEBHOOK_SECRET`). `TELEGRAM_CHAT_ID` с 14.09 функциями не читается — номера
+  сотрудников живут в `staff.telegram_id`;
 - **Учётки сотрудников** в Auth (данные, не схема);
 - **Реальный токен бота** внутри `send_daily_reminder` (в репозитории — плейсхолдер).
 

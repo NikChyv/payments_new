@@ -8,14 +8,14 @@ const sb = createClient(
   Deno.env.get("SB_SECRET_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
 
-const BOT   = Deno.env.get("TELEGRAM_BOT_TOKEN") ?? "";
-// TELEGRAM_CHAT_ID — один или несколько chat_id через запятую, напр. "111,222"
-//
 // Читаем через ?? "", а не через `!`: восклицательный знак — это обещание
 // компилятору, а не проверка. Пропади секрет — функция падала прямо на импорте
-// с невнятным 500 и не успевала даже записать отказ в журнал. Ровно тот класс
-// тихой поломки, из-за которого заведён notify_failures (M4.4).
-const CHATS = (Deno.env.get("TELEGRAM_CHAT_ID") ?? "").split(",").map(s => s.trim()).filter(Boolean);
+// с невнятным 500 и не успевала даже записать отказ в журнал (M4.4).
+const BOT = Deno.env.get("TELEGRAM_BOT_TOKEN") ?? "";
+
+// Номеров бухгалтеров здесь больше нет. Раньше «новая заявка» уходила всем из
+// секрета TELEGRAM_CHAT_ID, чей бы клиент ни был, — теперь адресатов по каждой
+// заявке считает база (notify_staff_chats, см. staffChats ниже).
 
 // Кто имеет право дёргать эту функцию. Verify JWT принимает любой валидный ключ
 // проекта, включая публичный из фронта, — то есть без своей проверки кто угодно
@@ -41,6 +41,23 @@ async function logFailure(branch: string, paymentId: unknown, chatId: unknown, d
   } catch (e) {
     console.error("не записался notify_failures:", e);
   }
+}
+
+// Кому из сотрудников слать: бухгалтер клиента плюс админы. Правило живёт в
+// базе (notify_staff_chats) — одно на обе функции уведомлений и на утреннее
+// письмо. Та же обёртка есть в notify-client.
+async function staffChats(rec: Record<string, unknown>): Promise<string[]> {
+  const { data, error } = await sb.rpc("notify_staff_chats", { p_client_id: rec.client_id ?? null });
+  if (error) {
+    console.error("notify_staff_chats:", error);
+    await logFailure("новая заявка", rec.id, null, `не удалось получить адресатов: ${error.message}`);
+    return [];
+  }
+  if (data?.unreachable) {
+    await logFailure("новая заявка", rec.id, null,
+      `у бухгалтера «${data.unreachable}» не указан telegram_id — уведомление ушло только админу`);
+  }
+  return Array.isArray(data?.chats) ? data.chats : [];
 }
 
 const months = ["янв","фев","мар","апр","мая","июн","июл","авг","сен","окт","ноя","дек"];
@@ -76,14 +93,6 @@ serve(async (req) => {
     const { record } = await req.json();
     if (!record) return new Response("no record", { status: 400 });
 
-    // Некому слать — это поломка настройки, а не «нечего делать»: заявка есть,
-    // а бухгалтеры о ней не узнают. Пишем в журнал, иначе снова тихо.
-    if (!CHATS.length || !BOT) {
-      await logFailure("новая заявка", record.id, null,
-        !BOT ? "не задан TELEGRAM_BOT_TOKEN" : "не задан TELEGRAM_CHAT_ID");
-      return new Response("not configured", { status: 500 });
-    }
-
     // следующая копия повторяющегося платежа создаётся системой после «Оплачено» —
     // клиент такую заявку не подавал, уведомлять о ней не нужно
     if (record.auto_created) return new Response("skip: auto-created");
@@ -92,6 +101,20 @@ serve(async (req) => {
     // уведомление не нужно, а личная задача вообще приватная.
     // Уведомление клиенту о таких заявках — отдельная задача, пока не делаем.
     if (record.created_by_staff) return new Response("skip: staff-created");
+
+    // Некому слать — это поломка настройки, а не «нечего делать»: заявка есть,
+    // а бухгалтеры о ней не узнают. Пишем в журнал, иначе снова тихо.
+    // Проверяем ПОСЛЕ пропусков выше: по авто-копиям адресатов искать незачем.
+    if (!BOT) {
+      await logFailure("новая заявка", record.id, null, "не задан TELEGRAM_BOT_TOKEN");
+      return new Response("not configured", { status: 500 });
+    }
+    const chats = await staffChats(record);
+    if (!chats.length) {
+      await logFailure("новая заявка", record.id, null,
+        "некому отправить: ни у бухгалтера клиента, ни у админов не указан telegram_id");
+      return new Response("no recipients", { status: 500 });
+    }
 
     const fileUrl = safeUrl(record.file_url);
 
@@ -108,17 +131,28 @@ serve(async (req) => {
     ].filter(Boolean).join("\n");
 
     // шлём каждому получателю отдельно; ошибка одного не блокирует остальных
-    await Promise.all(CHATS.map(async (chat) => {
-      const res = await fetch(`https://api.telegram.org/bot${BOT}/sendMessage`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: chat,
-          text: lines,
-          parse_mode: "HTML",
-          disable_web_page_preview: true,
-        }),
-      });
+    await Promise.all(chats.map(async (chat) => {
+      // fetch БРОСАЕТ при сетевой ошибке, а не возвращает !ok. Необёрнутый, он
+      // проходил мимо журнала и ронял Promise.all целиком — тот же класс, что
+      // уже закрыт в notify-client.
+      let res: Response;
+      try {
+        res = await fetch(`https://api.telegram.org/bot${BOT}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: chat,
+            text: lines,
+            parse_mode: "HTML",
+            disable_web_page_preview: true,
+          }),
+        });
+      } catch (e) {
+        const detail = `Telegram недоступен: ${e instanceof Error ? e.message : String(e)}`;
+        console.error(detail);
+        await logFailure("новая заявка", record.id, chat, detail);
+        return;
+      }
       if (!res.ok) {
         // Без этой записи бухгалтеры просто не узнали бы о заявке, и никто бы
         // этого не заметил (M4.4).
@@ -131,6 +165,8 @@ serve(async (req) => {
     return new Response("ok");
   } catch (e) {
     console.error(e);
+    await logFailure("вызов целиком", null, null,
+      `исключение: ${e instanceof Error ? e.message : String(e)}`);
     return new Response("error", { status: 500 });
   }
 });

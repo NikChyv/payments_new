@@ -2,9 +2,9 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const BOT = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
-// TELEGRAM_CHAT_ID — чаты бухгалтеров, через запятую (тот же секрет, что у notify-payment)
-const STAFF_CHATS = (Deno.env.get("TELEGRAM_CHAT_ID") ?? "")
-  .split(",").map((s) => s.trim()).filter(Boolean);
+// Номера бухгалтеров здесь больше не живут: адресатов по каждой заявке считает
+// база (notify_staff_chats), см. staffChats ниже. Раньше это был секрет
+// TELEGRAM_CHAT_ID, и всё уходило всем подряд, чей бы клиент ни был.
 
 // service_role подставляется Supabase автоматически
 const sb = createClient(
@@ -79,6 +79,30 @@ async function logFailure(branch: string, paymentId: unknown, chatId: unknown, d
   } catch (e) {
     console.error("не записался notify_failures:", e);
   }
+}
+
+// Кому из сотрудников слать уведомление по заявке: бухгалтер её клиента плюс
+// админы. Само правило живёт в базе (notify_staff_chats) — одно на обе функции
+// уведомлений и на утреннее письмо, и покрыто тестами. Здесь только вызов.
+//
+// Если у ответственного бухгалтера не указан Telegram, база всё равно вернёт
+// админов, а мы пишем это в журнал: иначе бухгалтер молча ничего не получает,
+// и узнаём мы об этом от недовольного клиента.
+//
+// Та же функция есть в notify-payment — правило в базе, а обёртка простая,
+// поэтому держим две копии, а не заводим общий модуль ради десяти строк.
+async function staffChats(branch: string, rec: Record<string, unknown>): Promise<string[]> {
+  const { data, error } = await sb.rpc("notify_staff_chats", { p_client_id: rec.client_id ?? null });
+  if (error) {
+    console.error("notify_staff_chats:", error);
+    await logFailure(branch, rec.id, null, `не удалось получить адресатов: ${error.message}`);
+    return [];
+  }
+  if (data?.unreachable) {
+    await logFailure(branch, rec.id, null,
+      `у бухгалтера «${data.unreachable}» не указан telegram_id — уведомление ушло только админу`);
+  }
+  return Array.isArray(data?.chats) ? data.chats : [];
 }
 
 async function tg(chatId: string | number, text: string, keyboard?: unknown, branch = "?", paymentId?: unknown) {
@@ -260,6 +284,14 @@ serve(async (req) => {
       clientTg = client?.telegram_id ?? null;
     }
 
+    // Адресаты среди сотрудников нужны двум веткам — «клиент ответил» и «клиент
+    // изменил». Спрашиваем базу лениво и один раз: чаще всего вызов про статус
+    // или документ, и сотрудникам там слать нечего. Заодно запись «у бухгалтера
+    // нет Telegram» не задвоится, если в одном вызове сработают обе ветки.
+    let staffChatsMemo: string[] | null = null;
+    const getStaffChats = async (branch: string) =>
+      staffChatsMemo ??= await staffChats(branch, rec);
+
     // ---------- 0. платёжный документ от бухгалтера ----------
     // Стоит первой намеренно: прикрепление документа приходит сюда как обычный
     // UPDATE от сотрудника, а diffLines про staff_files не знает.
@@ -334,8 +366,9 @@ serve(async (req) => {
           }
         }
 
-        // ответ клиента → в общий чат бухгалтеров
-        if (hasForStaff && STAFF_CHATS.length) {
+        // ответ клиента → бухгалтеру этого клиента и админам
+        const replyChats = hasForStaff ? await getStaffChats("переписка → бухгалтерам") : [];
+        if (hasForStaff && replyChats.length) {
           const card = `👤 ${esc(rec.client)}\n`
                      + `💳 ${esc(rec.payee)} · ${fmtMoney(Number(rec.amount))} · ${fmtDate(String(rec.due))}`;
           let i = fromStaff;
@@ -352,10 +385,15 @@ serve(async (req) => {
                        + (m.text ? `«${esc(m.text)}»` : "<i>без текста</i>")
                        + (files ? `\n\n${files}` : "");
             const results = await Promise.all(
-              STAFF_CHATS.map((chat) => tg(chat, text, undefined, "переписка → бухгалтерам", rec.id)));
+              replyChats.map((chat) => tg(chat, text, undefined, "переписка → бухгалтерам", rec.id)));
             if (!results.some(Boolean)) break;   // не дошло вообще никому — повторим позже
           }
           if (i > fromStaff) { patch.staff_thread_notified = i; done.push("ответ бухгалтерам"); }
+        } else if (hasForStaff) {
+          // Индекс не двигаем: как только кому-то проставят Telegram, ответ
+          // дойдёт при следующем касании заявки. Но и молчать нельзя.
+          await logFailure("переписка → бухгалтерам", rec.id, null,
+            "некому отправить: ни у бухгалтера клиента, ни у админов не указан telegram_id");
         }
       }
     }
@@ -405,14 +443,20 @@ serve(async (req) => {
           await firmSuffix(clientTg, rec.client), undefined, "правка → клиенту", rec.id);
         done.push("правка");
 
-      // правил клиент → сообщаем бухгалтерам
-      } else if (rec.last_edit_role === "anon" && STAFF_CHATS.length) {
-        const head = `✏️ <b>Клиент изменил заявку</b>\n\n`
-                   + `👤 ${esc(rec.client)}\n`
-                   + `💳 ${esc(rec.payee)} · ${fmtMoney(Number(rec.amount))} · ${fmtDate(String(rec.due))}\n\n`;
-        await Promise.all(STAFF_CHATS.map((chat) =>
-          tg(chat, head + changes.join("\n"), undefined, "правка → бухгалтерам", rec.id)));
-        done.push("правка");
+      // правил клиент → сообщаем бухгалтеру этого клиента и админам
+      } else if (rec.last_edit_role === "anon") {
+        const editChats = await getStaffChats("правка → бухгалтерам");
+        if (editChats.length) {
+          const head = `✏️ <b>Клиент изменил заявку</b>\n\n`
+                     + `👤 ${esc(rec.client)}\n`
+                     + `💳 ${esc(rec.payee)} · ${fmtMoney(Number(rec.amount))} · ${fmtDate(String(rec.due))}\n\n`;
+          await Promise.all(editChats.map((chat) =>
+            tg(chat, head + changes.join("\n"), undefined, "правка → бухгалтерам", rec.id)));
+          done.push("правка");
+        } else {
+          await logFailure("правка → бухгалтерам", rec.id, null,
+            "некому отправить: ни у бухгалтера клиента, ни у админов не указан telegram_id");
+        }
       }
     }
 

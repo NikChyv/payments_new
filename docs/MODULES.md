@@ -12,7 +12,7 @@
 Порядок ниже — порядок ревью, по цене ошибки. Не по алфавиту.
 
 Объёмы (строк) — чтобы планировать заходы: фронт 2 838, функции 1 075,
-миграции 1 931, тестов 222 в 16 файлах.
+миграции 1 931, тестов 239 в 17 файлах.
 
 ---
 
@@ -81,7 +81,7 @@
 |---|---|
 | Функции | `notify-payment` (64) — INSERT · `notify-client` (307) — UPDATE: документ, статус, переписка, правки · `send_daily_reminder` — cron 8:30 Минск, исходник `supabase/daily_reminder.sql` |
 | База | флаги `client_paid_notified`, `client_sent_notified`; счётчики `client_docs_notified`, `client_thread_notified`, `staff_thread_notified`; `last_edit_role` — миграции `…02_notify_once`, `…02_edit_tracking` |
-| Вне кода | **DB Webhooks** настраиваются в панели Supabase; секреты `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` |
+| Вне кода | **DB Webhooks** настраиваются в панели Supabase; секрет `TELEGRAM_BOT_TOKEN`. Номера сотрудников — `staff.telegram_id` (не секрет `TELEGRAM_CHAT_ID`, он с 14.09 не читается) |
 | Тесты | `staff_edit_test` — только `last_edit_role`. **Сами функции тестами не покрыты.** |
 
 **Что на кону.** Потерять и продублировать одинаково плохо — на этом уже был
