@@ -1,0 +1,4 @@
+# Shell-скрипты запускаются в Git Bash и на Linux-раннере: CRLF ломает bash
+# (ошибка «\r: command not found»). Восстановление файлов (scripts/restore_files.sh)
+# запускают как раз с Windows — в аварию, когда разбираться некогда.
+*.sh text eol=lf
