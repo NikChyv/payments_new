@@ -203,7 +203,7 @@ Excel откроет с ошибкой, а не пожалуется.
 | CI | `test.yml` — pgTAP на каждый push · `backup.yml` — шифрованный дамп 05:00 Минск · `health.yml` — каждые 15 минут |
 | Вне кода | секреты функций, DB Webhooks, учётки в Auth, **боевой токен внутри `send_daily_reminder`** |
 | Инструменты | `tools/uicheck.mjs` — снимки и ошибки консоли; `tools/racecheck.mjs` — гонка двух вкладок; `docs/RUNBOOK.md` |
-| Легаси, не ревьюить | `supabase/telegram_bot.sql`, `telegram_sessions.sql` — «выполнить в SQL Editor», эпоха до миграций; `index.html` и `app.html` в корне |
+| Легаси, не ревьюить | папка `legacy/` — SQL эпохи до миграций, не выполнять (README там же); `index.html` и `app.html` в корне |
 
 **Что на кону.** Baseline-миграция содержит **плейсхолдер токена** — прогнать её
 на проде значит сломать утреннюю рассылку; она помечена применённой через

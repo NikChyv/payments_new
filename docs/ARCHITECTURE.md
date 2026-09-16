@@ -165,15 +165,23 @@ Telegram. Текст собирает `daily_reminder_message(staff_id)`: пла
 
 ```
 supabase/
-  config.toml            конфиг локального стека (порты 483xx)
-  migrations/            схема БД по порядку (baseline + 18 миграций)
+  config.toml            конфиг локального стека (порты 183xx)
+  migrations/            схема БД по порядку (baseline + 25 миграций)
   functions/             исходники Edge Functions
   tests/                 pgTAP: 290 тестов в 19 файлах
   seed.sql               демо-данные (только локально)
-  daily_reminder.sql     утренняя рассылка (токен подставляется в проде)
+  daily_reminder.sql     утренняя рассылка и расписание (токен подставляется в проде)
+scripts/
+  webhooks.sql           Database Webhooks (ключи подставляются руками)
+  backup_files.sh        бэкап файлов Storage (зовёт backup.yml)
+  restore_files.sh       восстановление файлов — RUNBOOK §5.1
 .github/workflows/
-  test.yml               CI: supabase start + supabase test db
-  backup.yml             ежедневный шифрованный pg_dump
+  deploy.yml             push в main: тесты + сторож секретов → публикация сайта
+  test.yml               pgTAP на чистом стеке (зовёт deploy.yml и PR)
+  secrets.yml            сторож секретов (зовёт deploy.yml)
+  backup.yml             ежедневно: шифрованный pg_dump + архив файлов Storage
+  health.yml             каждые 15 минут: сайт, база, бот, отказы доставки
+legacy/                  SQL до миграций — НЕ выполнять (README внутри)
 ```
 
 Локальный стек поднимается одной командой (`supabase start`) и содержит полную
@@ -182,7 +190,8 @@ supabase/
 ## 5. Что живёт вне миграций
 
 Эти вещи задаются в панели Supabase и при восстановлении с нуля настраиваются
-руками (процедуры — в RUNBOOK):
+руками. Полный порядок одним списком — **RUNBOOK §5.2**; меняешь что-то из
+этого списка — поправь и его.
 
 - **Database Webhooks** для `notify-payment` и `notify-client` — пересоздаются
   файлом `scripts/webhooks.sql` (значения ключей подставляются руками; в
@@ -191,7 +200,13 @@ supabase/
   `WEBHOOK_SECRET`). `TELEGRAM_CHAT_ID` с 14.09 функциями не читается — номера
   сотрудников живут в `staff.telegram_id`;
 - **Учётки сотрудников** в Auth (данные, не схема);
-- **Реальный токен бота** внутри `send_daily_reminder` (в репозитории — плейсхолдер).
+- **Реальный токен бота** внутри `send_daily_reminder` (в репозитории — плейсхолдер)
+  и **расписание** `pg_cron` — оба из `supabase/daily_reminder.sql`;
+- **Расширения** `pg_cron`, `pg_net` и включённые Database Webhooks;
+- **Настройки Auth**: регистрация выключена (SECURITY.md 5.7);
+- **Telegram webhook** бота на адрес функции `telegram-bot`;
+- **Адрес проекта и publishable-ключ** во фронте (`app/js/config.js`) и в CI
+  (`health.yml`, `backup.yml`).
 
 Бакет `files` из этого списка выбыл: его публичность, потолок размера (10 МБ),
 белый список типов и политика вставки описаны миграцией

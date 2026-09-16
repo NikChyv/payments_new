@@ -176,6 +176,9 @@ psql "$SUPABASE_DB_URL" -f restore.sql
 | Платежи, статусы, журнал изменений | Секреты Edge Functions |
 | Функции, RPC, RLS-политики | Database Webhooks |
 | Привязки Telegram у клиентов | Расписание `pg_cron` и токен в `send_daily_reminder` |
+| Файлы — отдельным архивом, §5.1 | Настройки Auth, адрес проекта во фронте и CI |
+
+**Полный порядок восстановления с нуля — §5.2**, одним списком.
 
 ⚠️ **Логины бухгалтеров в бэкап не входят** — схема `auth` управляется Supabase
 и не выгружается. При полном восстановлении сотрудников нужно завести заново
@@ -207,6 +210,96 @@ BACKUP_PASSPHRASE=... \
 Проверено 16.09 на локальном стеке: бэкап → удаление файлов → восстановление →
 файлы совпали побайтно, в том числе с пробелами и скобками в имени; повторный
 запуск ничего не дублирует.
+
+### 5.2 Проект Supabase потерян — полное восстановление, один список
+
+Сюда собрано **всё**, что не лежит в дампе и миграциях (находка M11.3: раньше
+это было разбросано по §2.3, §5, §6.3 и §6.5). Идти строго по порядку: шаги
+зависят друг от друга. Отмечать галочками.
+
+Если проект жив и пропала одна заявка — это не сюда, а в §6.8. Пропали файлы —
+§5.1.
+
+Понадобятся: последний артефакт `db-backup` и `files-backup` (Actions → DB backup),
+`BACKUP_PASSPHRASE`, токен бота (@BotFather → /mybots → API Token), email'ы
+сотрудников и **их старые UID** (первая колонка в `staff` из дампа:
+`grep -A5 'COPY public.staff' restore.sql`).
+
+**А. Новый проект**
+- [ ] 1. Supabase → New project, регион тот же (eu-west-1). Записать новый
+      `<NEWREF>` (из адреса проекта) и пароль БД.
+- [ ] 2. Database → Extensions: включить **pg_cron** и **pg_net**.
+      Integrations → **Database Webhooks** → Enable.
+- [ ] 3. Authentication → Sign In / Providers: **выключить регистрацию**
+      (Allow new users to sign up — off). Иначе любой заведёт учётку (SECURITY.md 5.7).
+
+**Б. Данные**
+- [ ] 4. Расшифровать дамп (§5) и накатить в новый проект:
+      `psql "<строка Session pooler нового проекта>" -f restore.sql`.
+      Безобидные ошибки перечислены в §5.
+- [ ] 5. Сказать CLI, что миграции уже в базе (дамп создал схему целиком; без
+      этого `db push` начнёт накатывать всё с baseline). PowerShell, папка `payments`:
+      ```powershell
+      supabase link --project-ref <NEWREF>
+      supabase migration repair --status applied (Get-ChildItem supabase\migrations\*.sql | ForEach-Object { $_.Name.Split('_')[0] })
+      supabase db push --dry-run     # должно сказать, что применять нечего
+      ```
+- [ ] 6. Переписать ссылки на файлы: в заявках они содержат адрес старого
+      проекта. SQL Editor, подставив `<NEWREF>`. Триггеры выключаются на время
+      запроса: иначе проверка полей споткнётся о старые заявки, а журнал
+      получит сотни ложных правок. Проверено на локальном стеке 16.09.
+      ```sql
+      begin;
+      alter table public.payments disable trigger user;
+      update public.payments set
+        files       = replace(files::text,       'gmvhphuabiyggfurfhmc.supabase.co', '<NEWREF>.supabase.co')::jsonb,
+        staff_files = replace(staff_files::text, 'gmvhphuabiyggfurfhmc.supabase.co', '<NEWREF>.supabase.co')::jsonb,
+        thread      = replace(thread::text,      'gmvhphuabiyggfurfhmc.supabase.co', '<NEWREF>.supabase.co')::jsonb,
+        file_url    = replace(file_url,          'gmvhphuabiyggfurfhmc.supabase.co', '<NEWREF>.supabase.co')
+      where (files::text || staff_files::text || thread::text || coalesce(file_url, '')) like '%gmvhphuabiyggfurfhmc%';
+      alter table public.payments enable trigger user;
+      commit;
+      ```
+- [ ] 7. Файлы: §5.1 с `STORAGE_URL=https://<NEWREF>.supabase.co` и secret-ключом
+      нового проекта. Бакет с лимитами уже создан дампом/миграцией.
+- [ ] 8. Сотрудники — **с прежними UID**, тогда клиенты и личные задачи сами
+      окажутся у своих бухгалтеров. Через Admin API (панель UID задать не даёт;
+      проверено на локальном стеке), по разу на человека, Git Bash:
+      ```bash
+      curl -X POST "https://<NEWREF>.supabase.co/auth/v1/admin/users" \
+        -H "apikey: <sb_secret_…>" -H "Authorization: Bearer <sb_secret_…>" \
+        -H "Content-Type: application/json" \
+        -d '{"id":"<старый UID>","email":"<email>","password":"<временный>","email_confirm":true}'
+      ```
+      Пароли сообщить людям, попросить сменить.
+
+**В. Функции и уведомления**
+- [ ] 9. Edge Functions → Secrets: `TELEGRAM_BOT_TOKEN`, `TG_WEBHOOK_SECRET`
+      (новая случайная строка), `SB_SECRET_KEY` (secret-ключ нового проекта),
+      `WEBHOOK_SECRET` (новая случайная строка, `openssl rand -hex 32`).
+- [ ] 10. `supabase functions deploy notify-client`, `… notify-payment`, `… telegram-bot`.
+- [ ] 11. `scripts/webhooks.sql` в SQL Editor: заменить в нём адрес проекта на
+      `<NEWREF>`, подставить `<SECRET_KEY>` и `<WEBHOOK_SECRET>` (тот же, что в п. 9).
+      Это же перезаписывает триггеры, приехавшие из дампа со старым адресом.
+- [ ] 12. `supabase/daily_reminder.sql` в SQL Editor с настоящим токеном бота —
+      оболочка рассылки и расписание `pg_cron` (8:30 Минск).
+- [ ] 13. Telegram webhook на новый адрес (§6.5, с `<NEWREF>` и `TG_WEBHOOK_SECRET` из п. 9).
+
+**Г. Фронт и GitHub**
+- [ ] 14. Заменить `gmvhphuabiyggfurfhmc` на `<NEWREF>` и publishable-ключ на
+      новый: `app/js/config.js`, `.github/workflows/health.yml` (`SB_REST`,
+      `SB_BOTFN`, `SB_PUBKEY`), `.github/workflows/backup.yml` (`STORAGE_URL`),
+      `scripts/webhooks.sql`, этот RUNBOOK. Найти всё: `git grep gmvhphuabiyggfurfhmc`.
+- [ ] 15. GitHub → Settings → Secrets → Actions: `SUPABASE_DB_URL` — строка
+      Session pooler нового проекта. `BACKUP_PASSPHRASE`, `TELEGRAM_BOT_TOKEN`,
+      `TELEGRAM_CHAT_ID` — прежние.
+- [ ] 16. Коммит, `git push` → дождаться зелёного **Deploy site**.
+
+**Д. Проверка**
+- [ ] 17. Смоук-тест §2.4 целиком. Отдельно: скрепка на старой заявке открывает
+      файл (проверка п. 6–7), бухгалтер видит **своих** клиентов (п. 8).
+- [ ] 18. Actions → Health check и DB backup → Run workflow — оба зелёные.
+- [ ] 19. Утром следующего дня — письмо в 8:30 пришло троим.
 
 ### Проверка восстановления (раз в квартал)
 Накатить дамп в **локальный** стек и сверить количество строк с продом:
