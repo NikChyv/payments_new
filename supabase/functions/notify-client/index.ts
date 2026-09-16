@@ -206,7 +206,8 @@ async function firmSuffix(telegramId: number, firm: unknown) {
 // Что именно изменилось — списком «было → стало». Только те поля, которые видит
 // человек: служебные флаги уведомлений сюда попадать не должны, иначе функция
 //сама себе устроит рассылку, проставив флаг после отправки.
-function diffLines(oldRec: Record<string, unknown>, rec: Record<string, unknown>): string[] {
+function diffLines(oldRec: Record<string, unknown>, rec: Record<string, unknown>,
+                   skipFiles = false): string[] {
   const out: string[] = [];
   const pair = (label: string, a: string, b: string) => out.push(`• ${label}: ${esc(a)} → <b>${esc(b)}</b>`);
 
@@ -227,7 +228,7 @@ function diffLines(oldRec: Record<string, unknown>, rec: Record<string, unknown>
 
   const oldN = Array.isArray(oldRec.files) ? oldRec.files.length : 0;
   const newN = Array.isArray(rec.files) ? rec.files.length : 0;
-  if (oldN !== newN) pair("Файлов", String(oldN), String(newN));
+  if (oldN !== newN && !skipFiles) pair("Файлов", String(oldN), String(newN));
 
   return out;
 }
@@ -433,7 +434,19 @@ serve(async (req) => {
     // ---------- 2. правка заявки ----------
     // Направление определяет БД: last_edit_role проставляет триггер по JWT,
     // подделать его из браузера нельзя.
-    const changes = diffLines(old, rec);
+    //
+    // Ответ клиента с файлом из кабинета приходит одним UPDATE: reply_by_token
+    // дописывает переписку и кладёт файл во вложения, а триггер ставит
+    // last_edit_role = anon. Без этой оговорки бухгалтер получал два сообщения
+    // подряд — «Клиент ответил» (уже со ссылкой на файл) и «Клиент изменил
+    // заявку: Файлов 0 → 1». Если в этом же UPDATE в переписке появились
+    // сообщения клиента, прирост файлов объяснён ответом и правкой не считается.
+    // Остальные поля reply_by_token не трогает, так что настоящая правка
+    // по-прежнему дойдёт — она приходит отдельным UPDATE.
+    const oldThread = Array.isArray(old.thread) ? old.thread as ThreadMsg[] : [];
+    const clientReplied = thread.length > oldThread.length &&
+      thread.slice(oldThread.length).some((m) => m && m.who === "client");
+    const changes = diffLines(old, rec, clientReplied);
     if (changes.length) {
       // правил сотрудник → сообщаем клиенту, но только про ЕГО собственную заявку:
       // заявки, заведённые бухгалтером, клиент и так не редактирует

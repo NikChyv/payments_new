@@ -168,7 +168,7 @@ supabase/
   config.toml            конфиг локального стека (порты 183xx)
   migrations/            схема БД по порядку (baseline + 25 миграций)
   functions/             исходники Edge Functions
-  tests/                 pgTAP: 290 тестов в 19 файлах
+  tests/                 pgTAP: 298 тестов в 20 файлах
   seed.sql               демо-данные (только локально)
   daily_reminder.sql     утренняя рассылка и расписание (токен подставляется в проде)
 scripts/
