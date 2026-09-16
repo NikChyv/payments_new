@@ -43,7 +43,7 @@
 ```
 supabase start                    # стек (порты 183xx)
 supabase db reset                 # схема с нуля + демо-данные
-supabase test db                  # 251 pgTAP-тест, должны быть зелёными
+supabase test db                  # 286 pgTAP-тестов, должны быть зелёными
 node tools/uicheck.mjs --serve    # поднять фронт и держать открытым
 ```
 

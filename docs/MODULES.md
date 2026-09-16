@@ -12,7 +12,7 @@
 Порядок ниже — порядок ревью, по цене ошибки. Не по алфавиту.
 
 Объёмы (строк) — чтобы планировать заходы: фронт 2 838, функции 1 075,
-миграции 1 931, тестов 251 в 18 файлах.
+миграции 1 931, тестов 286 в 19 файлах.
 
 ---
 
@@ -62,7 +62,7 @@
 |---|---|
 | Хранилище | бакет `files`: 10 МБ, белый список типов — миграция `…03_storage_limits`; политики Storage |
 | База | `payments.files` + **зеркало `file_url`/`file_name` первого файла**; `staff_files` + `client_docs_notified`; миграции `…01_multi_files`, `…01_staff_documents` |
-| Фронт | `supabase.js` — `uploadFile/uploadFiles`, `ALLOWED_EXT` · `queue.js` — `attachDocument`, `fileBadges`, `staffFileBadges` |
+| Фронт | `supabase.js` — `uploadFile/uploadFiles`, `MIME_BY_EXT` · `queue.js` — `attachDocument`, `fileBadges`, `staffFileBadges` |
 | Функции | бот — `uploadTelegramFile`, `MIME_BY_EXT` · `notify-client` — ветка 0, `sendDocument` байтами |
 | Тесты | `storage_limits` (13), `multi_files` (13), `staff_documents` (9) |
 

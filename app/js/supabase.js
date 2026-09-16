@@ -23,6 +23,9 @@ export function toRow(it) {
     client_id: it.client_id || null,
     auto_created: !!it.autoCreated,
     created_by_staff: it.createdByStaff || null,
+    // копия повторяющегося платежа помнит исходную заявку: по этой ссылке
+    // «Отменить оплату» находит именно её, а не похожую (M1.4)
+    parent_id: it.parentId || null,
     // документы бухгалтера живут отдельно от files: те — счёт от клиента,
     // и их первый элемент зеркалится в file_url, который читают рассылки
     staff_files: Array.isArray(it.staffFiles) ? it.staffFiles : [],
@@ -48,6 +51,8 @@ export function fromRow(r) {
     created: r.created_at, client_id: r.client_id || null,
     autoCreated: !!r.auto_created,
     createdByStaff: r.created_by_staff || null,
+    parentId: r.parent_id || null,
+    lastEditAt: r.last_edit_at || null,
     staffFiles: Array.isArray(r.staff_files) ? r.staff_files : [],
     thread: Array.isArray(r.thread) ? r.thread : [],
   };
@@ -79,6 +84,11 @@ export async function load() {
       const res = await sb.from(TABLE).select("*");
       if (res.error) throw res.error;
       state.items = (res.data || []).map(fromRow);
+      // Сервер отдаёт не больше max_rows строк (config.toml, на проде тоже 1000)
+      // и режет молча (M1.6). На 16.09 заявок меньше 200 — хватит надолго, но
+      // когда упрёмся, узнать об этом надо сразу, а не по пропавшим заявкам.
+      if (res.data && res.data.length >= 1000)
+        toast("Загружено 1000 заявок — это предел, часть очереди может не показываться. Сообщите администратору");
       if (state.currentStaff && !state.currentStaff.is_admin) {
         const ids = {};
         state.clientsList.forEach(c => { ids[c.id] = 1; });
@@ -213,15 +223,26 @@ function _saveLocal() {
 // 20260826000003_storage_limits.sql). Проверяем до отправки: браузер иначе
 // выгрузит все 30 МБ по мобильному интернету и лишь потом получит отказ.
 export const MAX_FILE_BYTES = 10 * 1024 * 1024;
-const ALLOWED_EXT = ["jpg","jpeg","png","heic","heif","webp","pdf","xlsx","docx","xls","doc"];
+// Тип отдаём бакету сами, по расширению (M3.2): для heic на Windows и части
+// Android браузер присылает пустой type, бакет отвечал «mime type not supported»,
+// и человек видел «сбой» вместо причины. Таблица та же, что MIME_BY_EXT в боте.
+const MIME_BY_EXT = {
+  jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png",
+  heic: "image/heic", heif: "image/heif", webp: "image/webp",
+  pdf: "application/pdf",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls: "application/vnd.ms-excel",
+  doc: "application/msword",
+};
+const fileExt = file => (file.name.split(".").pop() || "").toLowerCase();
 
 // Тип проверяем по расширению, а не по file.type: браузеры для heic и части
 // офисных форматов отдают пустую строку, и проверка по типу зарубила бы годный
 // файл. Настоящий фильтр всё равно на стороне бакета — здесь только понятное
 // сообщение вместо отказа сервера.
 function fileProblem(file) {
-  const ext = (file.name.split(".").pop() || "").toLowerCase();
-  if (!ALLOWED_EXT.includes(ext)) return "тип";
+  if (!MIME_BY_EXT[fileExt(file)]) return "тип";
   if (file.size > MAX_FILE_BYTES) return "размер";
   return null;
 }
@@ -238,7 +259,7 @@ export async function uploadFile(file) {
       const rand = crypto.getRandomValues(new Uint8Array(16));
       const hex = Array.from(rand, b => b.toString(16).padStart(2, "0")).join("");
       const path = hex + "/" + file.name.replace(/[^\w.\-]+/g, "_");
-      const up = await sb.storage.from(BUCKET).upload(path, file);
+      const up = await sb.storage.from(BUCKET).upload(path, file, {contentType: MIME_BY_EXT[fileExt(file)]});
       if (up.error) throw up.error;
       const pub = sb.storage.from(BUCKET).getPublicUrl(path);
       return {name: file.name, url: pub.data.publicUrl};
@@ -276,6 +297,19 @@ export async function removeRemote(idv) {
   if (!useRemote) { _saveLocal(); return; }
   const res = await sb.from(TABLE).delete().eq("id", idv);
   if (res.error) throw res.error;
+}
+
+// Удаление автокопии при отмене оплаты — только нетронутой. Условие проверяет
+// база, а не вкладка: пока бухгалтер смотрел на экран, клиент мог приложить
+// счёт к копии или поправить её. Возвращает false, если копию уже тронули.
+export async function removeUntouchedCopyRemote(idv) {
+  if (!useRemote) { _saveLocal(); return true; }
+  const res = await sb.from(TABLE).delete()
+    .eq("id", idv).eq("status", "new").is("last_edit_at", null)
+    .eq("files", "[]").eq("thread", "[]")
+    .select("id");
+  if (res.error) throw res.error;
+  return !!(res.data && res.data.length);
 }
 
 function seed() {

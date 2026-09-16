@@ -89,10 +89,17 @@ export function openThread(it, onChange) {
     .map((t, i) => `<button type="button" class="th-chip" data-tpl="${i}">${esc(t)}</button>`).join("");
   document.getElementById("thText").value = "";
 
+  // По закрытой заявке писать нельзя (M7.2): клиент ответить уже не сможет,
+  // сервер такой вопрос отвергнет. Историю показываем, поле ввода — нет.
+  const closed = it.status === "sent";
+  document.getElementById("thClosed").classList.toggle("hidden", !closed);
+  document.getElementById("thCompose").classList.toggle("hidden", closed);
+  document.getElementById("thSend").classList.toggle("hidden", closed);
+
   // Напоминать есть смысл, только пока ждём ответа — иначе это сообщение
   // в пустоту: клиент уже ответил, вопрос за бухгалтером.
   const remind = document.getElementById("thRemind");
-  remind.classList.toggle("hidden", st !== "waiting");
+  remind.classList.toggle("hidden", closed || st !== "waiting");
 
   const warn = document.getElementById("thWarn");
   if (clientHasBot(it)) {

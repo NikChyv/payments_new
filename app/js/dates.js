@@ -37,3 +37,35 @@ export function fmtDate(dateStr) {
 export function fmtMoney(v) {
   return Number(v).toLocaleString("ru-RU", {minimumFractionDigits: 2, maximumFractionDigits: 2}) + " Br";
 }
+
+// ---------- рабочий график бухгалтерии: пн–пт до 17:00 по Минску ----------
+// Настоящее правило живёт в базе (adjust_due_date). Здесь его зеркало — только
+// чтобы сказать человеку заранее, куда уедет дата (M2.4), а не удивить потом.
+// Время берём минское, а не часы браузера: клиент может быть в другом поясе.
+
+function minskNow() {
+  const p = {};
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Minsk", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", hourCycle: "h23",
+  }).formatToParts(new Date()).forEach(x => { p[x.type] = x.value; });
+  return { date: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour) };
+}
+
+const isWeekendIso = iso => [0, 6].includes(new Date(iso + "T00:00:00Z").getUTCDay());
+
+// Дата, на которую сервер поставит заявку, если выбрать `iso`. Совпадает с
+// выбранной почти всегда; отличается, только когда выбрано «сегодня», а рабочий
+// день уже закончился или сегодня выходной.
+export function workingDueFor(iso) {
+  const now = minskNow();
+  if (iso !== now.date || (!isWeekendIso(iso) && now.hour < 17)) return iso;
+  let d = addDays(iso, 1);
+  while (isWeekendIso(d)) d = addDays(d, 1);
+  return d;
+}
+
+export function fmtDateDow(dateStr) {
+  const dow = ["вс","пн","вт","ср","чт","пт","сб"][new Date(dateStr + "T00:00:00Z").getUTCDay()];
+  return dow + ", " + fmtDate(dateStr);
+}

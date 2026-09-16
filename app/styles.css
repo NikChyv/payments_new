@@ -296,7 +296,8 @@ body.client-mode .fg:first-of-type label{font-size:14px}
   .ovl-btns .btn{flex:1}
   .ovl-btns .btn.soft[data-th="remind"]{flex-basis:100%}
 }
-.cl-period input{border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:13px;color:var(--ink);background:#fff}
+.cl-period input,.cl-period select{border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:13px;color:var(--ink);background:#fff}
+.cl-period input[data-edname]{flex:1;min-width:180px}
 .cl-period button{background:var(--accent);color:#fff;border:none;border-radius:9px;padding:8px 16px;font-weight:700;font-size:13px;cursor:pointer}
 .cl-period button:hover{background:var(--accent-d)}
 .cl-period[hidden]{display:none}

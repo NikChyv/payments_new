@@ -33,7 +33,7 @@ send() {
   curl -s -o /dev/null -X POST "$URL" \
     -H "content-type: application/json" \
     -H "x-telegram-bot-api-secret-token: $SECRET" \
-    -d "{\"message\":{\"chat\":{\"id\":$CHAT},\"from\":{\"id\":$CHAT},\"text\":\"$1\"}}"
+    -d "{\"message\":{\"chat\":{\"id\":$CHAT,\"type\":\"private\"},\"from\":{\"id\":$CHAT},\"text\":\"$1\"}}"
   sleep 2
 }
 
@@ -103,7 +103,7 @@ send_from() { # $1 = chat, $2 = текст
   curl -s -o /dev/null -X POST "$URL" \
     -H "content-type: application/json" \
     -H "x-telegram-bot-api-secret-token: $SECRET" \
-    -d "{\"message\":{\"chat\":{\"id\":$1},\"from\":{\"id\":$1},\"text\":\"$2\"}}"
+    -d "{\"message\":{\"chat\":{\"id\":$1,\"type\":\"private\"},\"from\":{\"id\":$1},\"text\":\"$2\"}}"
   sleep 2
 }
 
@@ -117,6 +117,33 @@ else
   echo "  FAIL — у нового чата «$other_has», ожидали «ООО «Ромашка»»"
   fails=$((fails + 1))
 fi
+
+# M5.2 (сентябрь 2026): в группе фирма не привязывается. chat.id группы — это
+# все её участники: документы видел бы каждый, заявки мог бы заводить любой.
+# Проверяем и живую ссылку свободной фирмы, и ссылку уже привязанной — ни та,
+# ни другая в группу не уезжают.
+GROUP=-100555003
+send_group() { # $1 = тип чата, $2 = текст
+  curl -s -o /dev/null -X POST "$URL" \
+    -H "content-type: application/json" \
+    -H "x-telegram-bot-api-secret-token: $SECRET" \
+    -d "{\"message\":{\"chat\":{\"id\":$GROUP,\"type\":\"$1\"},\"from\":{\"id\":$CHAT},\"text\":\"$2\"}}"
+  sleep 2
+}
+group_has() {
+  "$DOCKER" exec -i "$CT" psql -U postgres -d postgres -tAq \
+    -c "select count(*) from clients where telegram_id = $GROUP;" | tr -d '\r'
+}
+
+send_group "group" "/start demotoken2"
+send_group "supergroup" "/start demotoken1"
+if [ "$(group_has)" = "0" ]; then
+  echo "  ok   — /start в группе и супергруппе ничего не привязал"
+else
+  echo "  FAIL — к группе привязано фирм: $(group_has), ожидали 0"
+  fails=$((fails + 1))
+fi
+check "ИП Смирнов" "/start в группе не увёл фирму у того, кто её привязал лично"
 
 echo
 if [ "$fails" -eq 0 ]; then echo "Все проверки пройдены."; else echo "Провалено проверок: $fails"; fi

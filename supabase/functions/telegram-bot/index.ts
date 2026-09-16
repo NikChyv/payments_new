@@ -300,7 +300,21 @@ async function showConfirm(c: number, d: Draft) { await send(c, summary(d), KB.c
 
 // ---------- обработка текстового шага ----------
 
+// Те же пределы, что проверяет база (validate_payment_fields, M2.2). Здесь —
+// только чтобы сказать о них на этом шаге: иначе человек прошёл бы все восемь
+// шагов и получил отказ на «Подтвердить».
+const MAX_LEN: Record<string, [number, string]> = {
+  payee:      [200,  "Получатель"],
+  requisites: [1000, "Реквизиты"],
+  purpose:    [1000, "Назначение"],
+};
+
 async function routeText(chatId: number, tgId: number, step: string, draft: Draft, text: string) {
+  const lim = MAX_LEN[step];
+  if (lim && text.length > lim[0]) {
+    await send(chatId, `${lim[1]} не длиннее ${lim[0]} символов, а у вас ${text.length}. Сократите и пришлите ещё раз.`);
+    return;
+  }
   switch (step) {
     case "payee":
       draft.payee = text;
@@ -369,7 +383,7 @@ async function sendReply(
 }
 
 async function submit(chatId: number, tgId: number, token: string, d: Draft) {
-  const { error } = await sb.rpc("submit_payment", {
+  const { data: newId, error } = await sb.rpc("submit_payment", {
     p_token:        token,
     p_payee:        d.payee,
     p_amount:       d.amount,
@@ -405,7 +419,18 @@ async function submit(chatId: number, tgId: number, token: string, d: Draft) {
   }
 
   await clearSession(tgId);
-  await send(chatId, `✅ Заявка отправлена бухгалтеру. Платёж «${esc(d.payee)}» на ${fmtDate(d.due as string)} в очереди.\n\nПосмотреть статус: /payments`);
+  // M2.4: «сегодня» после 17:00 база переносит на следующий рабочий день.
+  // Называем дату, на которую заявка встала на самом деле, а не ту, что выбрал
+  // человек, — и говорим о переносе прямо.
+  let due = d.due as string;
+  if (newId) {
+    const { data: row } = await sb.from("payments").select("due").eq("id", newId).maybeSingle();
+    if (row?.due) due = row.due;
+  }
+  const moved = due !== d.due
+    ? `\n\n⏭ Рабочий день бухгалтерии закончился (пн–пт до 17:00), поэтому платёж перенесён на ${fmtDate(due)}.`
+    : "";
+  await send(chatId, `✅ Заявка отправлена бухгалтеру. Платёж «${esc(d.payee)}» на ${fmtDate(due)} в очереди.${moved}\n\nПосмотреть статус: /payments`);
 }
 
 // ---------- обработчики ----------
@@ -470,6 +495,19 @@ async function handleMessage(msg: any) {
 
   // привязка по deep-link
   if (text.startsWith("/start")) {
+    // M5.2. Фирма привязывается только к личному чату. В группе chat.id —
+    // это вся группа: платёжные документы видел бы каждый участник, в том
+    // числе добавленный позже, и любой мог бы заводить заявки от имени фирмы.
+    // Решение владельца 16.09: новые привязки к группам запрещены. Уже
+    // привязанные группы не трогаем — они продолжают работать.
+    // Проверка стоит до поиска по токену: в группе не отвечаем даже тем,
+    // живая ли ссылка.
+    if (msg.chat.type !== "private") {
+      await send(chatId, "Привязать фирму можно только в личном чате с ботом, не в группе: " +
+        "иначе платёжные документы увидят все участники.\n\n" +
+        "Откройте персональную ссылку от бухгалтера сами — бот откроется в личном чате — и нажмите «Старт».");
+      return;
+    }
     const token = text.split(/\s+/)[1];
     if (!token) { await send(chatId, "Привет! Откройте персональную ссылку от бухгалтера и нажмите «Старт»."); return; }
 

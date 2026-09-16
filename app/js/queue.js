@@ -1,7 +1,7 @@
 import { state } from './state.js';
 import { daysBetween, addDays, addMonths, fmtDate, fmtMoney, todayStr } from './dates.js';
 import { removeRemote, uploadFiles, changeStatusRemote, attachDocRemote,
-         insertPaymentRemote, postStaffMessage } from './supabase.js';
+         insertPaymentRemote, postStaffMessage, removeUntouchedCopyRemote } from './supabase.js';
 import { esc, safeUrl, toast, setText, genId } from './utils.js';
 import { threadState, openThread } from './thread.js';
 
@@ -145,7 +145,8 @@ function rowHtml(it) {
 
   // Метка переписки. «Ждём ответ» намеренно спокойная: заявка и так уже
   // подсвечена сроком, а второй кричащий цвет в строке только мешает.
-  const ts = threadState(it);
+  // У закрытой заявки ждать ответа уже нечего — метку не показываем (M7.2).
+  const ts = it.status === "sent" ? null : threadState(it);
   const threadBadge =
     ts === "waiting"  ? '<span class="badge b-wait">⏸ ждём ответ клиента</span>' :
     ts === "answered" ? '<span class="badge b-answer">💬 клиент ответил</span>' : "";
@@ -388,6 +389,7 @@ async function afterPaid(it) {
     thread: [],      // переписка была про прошлый платёж
     created: todayStr(),
     autoCreated: true, // заявку не подавал клиент — уведомление не шлём
+    parentId: it.id,   // по ней «Отменить оплату» найдёт именно эту копию (M1.4)
   };
 
   try {
@@ -409,21 +411,35 @@ async function afterPaid(it) {
 async function afterUndoPaid(it) {
   if (it.recurrence === "once") { toast("Оплата отменена"); return; }
 
+  // Копию ищем по ссылке на исходную заявку (M1.4). Раньше — по совпадению
+  // клиента, получателя, суммы и даты, и под удаление попадала заявка, которую
+  // клиент завёл сам. Копии, созданные до 16.09, ссылки не имеют: для них
+  // прежний поиск, но только среди созданных автоматически.
   const nd = nextDueOf(it);
-  const idx = state.items.findIndex(c =>
-    c !== it && c.status === "new" && c.recurrence === it.recurrence &&
-    c.client === it.client && c.payee === it.payee &&
+  let idx = state.items.findIndex(c => c.parentId === it.id);
+  if (idx < 0) idx = state.items.findIndex(c =>
+    c !== it && !c.parentId && c.autoCreated && c.status === "new" &&
+    c.recurrence === it.recurrence && c.client === it.client && c.payee === it.payee &&
     Number(c.amount) === Number(it.amount) && c.due === nd
   );
   if (idx < 0) { toast("Оплата отменена"); return; }
 
+  // Копию уже тронули — взяли в работу, приложили счёт, поправили, начали
+  // переписку. Удалять молча нельзя: пропадёт чужая работа. Проверяет база в
+  // момент удаления; вкладка могла отстать от неё на опрос.
+  const copy = state.items[idx];
+  let removed;
   try {
-    await removeRemote(state.items[idx].id);
+    removed = await removeUntouchedCopyRemote(copy.id);
   } catch (e) {
     console.error(e);
     toast("Оплата отменена, но следующий платёж удалить не вышло — удалите вручную");
     return;
   }
-  state.items.splice(idx, 1);
+  if (!removed) {
+    toast("Оплата отменена. Следующий платёж на " + fmtDate(copy.due) + " уже изменён — проверьте его вручную");
+    return;
+  }
+  state.items.splice(state.items.indexOf(copy), 1);
   toast("Оплата отменена, следующий платёж удалён");
 }

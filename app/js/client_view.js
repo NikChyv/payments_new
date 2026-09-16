@@ -147,7 +147,9 @@ function rowHtmlClient(it) {
   const fileBadge = fileBadges(it);
   const recBadge = it.recurrence !== "once" ? `<span class="badge b-rec">🔁 ${recLbl[it.recurrence]}</span>` : "";
   // Пока заявка не взята в работу (status 'new') — клиент может её отредактировать.
-  const editBtn = it.status === "new"
+  // Кроме заведённых бухгалтером: их сервер править не даст (M2.3), и кнопка
+  // только обещала бы то, чего нет.
+  const editBtn = it.status === "new" && !it.createdByStaff
     ? `<button class="ghost cl-edit" data-edit="${esc(it.id)}">✏️ Редактировать</button>`
     : "";
   // Повторить платёж можно с любой заявки, в том числе давно оплаченной —

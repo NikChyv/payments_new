@@ -1,4 +1,4 @@
-import { sb, useRemote } from './supabase.js';
+import { sb, useRemote, load } from './supabase.js';
 import { state } from './state.js';
 import { esc, toast } from './utils.js';
 import { monthRange } from './export.js';
@@ -64,6 +64,21 @@ export function renderClients() {
         `>🗑 Удалить</button>`
       : "";
 
+    // Переименовать и сменить бухгалтера — только админ (M9.1, M9.2). Проверка
+    // прав в update_client; кнопку бухгалтеру не показываем, чтобы не обещать.
+    const editBtn = isAdmin
+      ? `<button data-cledit="${esc(c.id)}" title="Название и бухгалтер">✏️ Изменить</button>`
+      : "";
+    const editBox = isAdmin
+      ? `<div class="cl-period" id="ed-${esc(c.id)}" hidden>` +
+          `<input data-edname="${esc(c.id)}" value="${esc(c.name)}" maxlength="200" placeholder="Название компании">` +
+          `<select data-edstaff="${esc(c.id)}">` + state.staffList.map(s =>
+            `<option value="${esc(s.id)}"${s.id === c.staff_id ? " selected" : ""}>${esc(s.name)}${s.is_admin ? " (админ)" : ""}</option>`
+          ).join("") + `</select>` +
+          `<button data-edsave="${esc(c.id)}">Сохранить</button>` +
+        `</div>`
+      : "";
+
     return `<div class="cl-card">` +
       `<div class="nm">${esc(c.name)}</div>` +
       `<div class="who">Бухгалтер: ${esc(staffNameById(c.staff_id))} · заявок: ${cnt}</div>` +
@@ -72,8 +87,10 @@ export function renderClients() {
       `<button class="ghost" data-rotate="${esc(c.id)}" title="Перевыпустить ссылку — старая перестанет работать">🔄 Перевыпустить</button></div>` +
       `<div class="cl-tools">` +
         `<button class="cl-exp" data-export="${esc(c.id)}">📊 Выгрузить в Excel</button>` +
+        editBtn +
         delBtn +
       `</div>` +
+      editBox +
       `<div class="cl-period" id="per-${esc(c.id)}" hidden>` +
         `<span>с</span><input type="date" data-from="${esc(c.id)}" value="${per.from}">` +
         `<span>по</span><input type="date" data-to="${esc(c.id)}" value="${per.to}">` +
@@ -93,6 +110,37 @@ export async function deleteClientById(id) {
   renderClients();
   fillStaffClientSelect();
   toast("Клиент удалён");
+}
+
+// Админ меняет название и бухгалтера клиента одной функцией в базе: там же имя
+// переписывается во всех заявках клиента (payments.client — копия имени, по
+// ней фильтр очереди, выгрузка, бот и уведомления).
+export async function saveClientEdit(id) {
+  const c = state.clientsList.find(x => x.id === id);
+  const nameEl  = document.querySelector(`input[data-edname="${id}"]`);
+  const staffEl = document.querySelector(`select[data-edstaff="${id}"]`);
+  if (!c || !nameEl || !staffEl) return;
+  const name = nameEl.value.trim();
+  const sid  = staffEl.value;
+  if (!name) { toast("Укажите название компании"); return; }
+  if (name === c.name && sid === c.staff_id) { toast("Ничего не изменилось"); return; }
+
+  // Смена бухгалтера уводит к нему всю историю клиента — это надо понимать до
+  // нажатия, а не узнавать от коллеги.
+  if (sid !== c.staff_id &&
+      !confirm(`Передать «${c.name}» бухгалтеру ${staffNameById(sid)}?\n\n` +
+               `Все заявки клиента, включая старые, будут видны новому бухгалтеру и пропадут ` +
+               `из очереди прежнего. Уведомления о новых заявках тоже пойдут новому.`)) return;
+
+  const res = await sb.rpc("update_client", { p_id: id, p_name: name, p_staff_id: sid });
+  if (res.error) { toast("Ошибка: " + res.error.message); return; }
+
+  await loadClients();
+  await load();              // имя клиента в заявках поменялось на сервере
+  renderClients();
+  fillStaffClientSelect();
+  refreshClients();          // фильтр очереди «по клиенту» собирается из имён в заявках
+  toast("Клиент сохранён");
 }
 
 // Пункт 5: отзыв ссылки — генерируем новый токен, старый мгновенно мёртв.

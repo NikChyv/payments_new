@@ -113,7 +113,7 @@
 
       <div class="fg">
         <label>Кому платим (получатель) <span class="req">*</span></label>
-        <input name="payee" required placeholder="Название контрагента">
+        <input name="payee" required maxlength="200" placeholder="Название контрагента">
       </div>
 
       <div class="two">
@@ -123,7 +123,7 @@
         </div>
         <div class="fg">
           <label>УНП / реквизиты или счёт</label>
-          <input name="requisites" placeholder="УНП, р/с или № счёта">
+          <input name="requisites" maxlength="1000" placeholder="УНП, р/с или № счёта">
         </div>
       </div>
 
@@ -131,6 +131,8 @@
         <div class="fg">
           <label>Дата платежа <span class="req">*</span></label>
           <input name="due" type="date" required>
+          <!-- «сегодня» после 17:00 или в выходной сервер перенесёт: говорим заранее (M2.4) -->
+          <div class="hint hidden" id="dueHint"></div>
         </div>
         <div class="fg">
           <label>Периодичность <span class="req">*</span></label>
@@ -144,7 +146,7 @@
 
       <div class="fg">
         <label>Назначение платежа</label>
-        <textarea name="purpose" placeholder="За что платим: договор, счёт, период…"></textarea>
+        <textarea name="purpose" maxlength="1000" placeholder="За что платим: договор, счёт, период…"></textarea>
       </div>
 
       <div class="fg">
@@ -210,17 +212,22 @@
 
     <div class="th-warn hidden" id="thWarn"></div>
 
-    <label class="th-label">Частые вопросы</label>
-    <div class="th-chips" id="thChips"></div>
+    <!-- по закрытой заявке клиент ответить не может, поэтому и спрашивать нельзя -->
+    <div class="th-warn hidden" id="thClosed">Заявка закрыта — клиент ответить по ней уже не сможет. Если что-то не так, свяжитесь с ним напрямую.</div>
 
-    <label class="th-label" for="thText">Сообщение клиенту</label>
-    <textarea id="thText" rows="3" placeholder="Напишите, чего не хватает…"></textarea>
-    <div class="hint">Клиент получит вопрос в Telegram с кнопкой «Ответить» и увидит его в своём кабинете.</div>
+    <div id="thCompose">
+      <label class="th-label">Частые вопросы</label>
+      <div class="th-chips" id="thChips"></div>
+
+      <label class="th-label" for="thText">Сообщение клиенту</label>
+      <textarea id="thText" rows="3" maxlength="1000" placeholder="Напишите, чего не хватает…"></textarea>
+      <div class="hint">Клиент получит вопрос в Telegram с кнопкой «Ответить» и увидит его в своём кабинете.</div>
+    </div>
 
     <div class="ovl-btns">
       <button class="btn soft th-act hidden" data-th="remind" id="thRemind">🔔 Напомнить</button>
       <button class="btn soft" data-th="close">Закрыть</button>
-      <button class="btn p th-act" data-th="send">Отправить вопрос</button>
+      <button class="btn p th-act" data-th="send" id="thSend">Отправить вопрос</button>
     </div>
   </div>
 </div>

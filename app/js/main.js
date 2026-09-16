@@ -1,9 +1,9 @@
 import { useRemote, sb, load, uploadFiles, updateContentRemote, insertPaymentRemote } from './supabase.js';
 import { state } from './state.js';
-import { todayStr, fmtDate } from './dates.js';
+import { todayStr, fmtDate, workingDueFor, fmtDateDow } from './dates.js';
 import { esc, toast, genId } from './utils.js';
 import { onLoggedIn, doLogin, doLogout } from './auth.js';
-import { addClient, refreshClients, rotateClientToken, deleteClientById, renderClients } from './clients.js';
+import { addClient, refreshClients, rotateClientToken, deleteClientById, renderClients, saveClientEdit } from './clients.js';
 import { exportClientPayments } from './export.js';
 import { render, onListClick } from './queue.js';
 import {
@@ -101,8 +101,27 @@ function fillFormForEdit(it) {
   fillFormFields(it);
   document.getElementById("payForm").due.value = it.due || todayStr();
   state.editingId = it.id;
+  state.editingDue = it.due || null;
   setFormMode(true);
+  updateDueHint();
   switchView("form");
+}
+
+// M2.4. Клиент выбрал «сегодня», а рабочий день бухгалтерии закончился — сервер
+// перенесёт платёж на следующий рабочий день. Говорим об этом под полем даты
+// до отправки. Дату, которую при правке не трогали, сервер не переносит, —
+// значит и подсказывать нечего. Сотрудника это не касается: его запись идёт
+// мимо adjust_due_date.
+function updateDueHint() {
+  const hint = document.getElementById("dueHint");
+  if (!hint) return;
+  const due = document.getElementById("payForm").due.value;
+  const untouched = state.editingId && due === state.editingDue;
+  const moved = state.TOKEN && due && !untouched ? workingDueFor(due) : due;
+  if (moved === due) { hint.classList.add("hidden"); hint.textContent = ""; return; }
+  hint.textContent = "Рабочий день бухгалтерии закончился (пн–пт до 17:00) — платёж встанет на " +
+    fmtDateDow(moved) + ".";
+  hint.classList.remove("hidden");
 }
 
 // Дубликат: те же данные, но это НОВАЯ заявка. Дату ставим на сегодня — у
@@ -111,6 +130,8 @@ function fillFormForDuplicate(it) {
   fillFormFields(it);
   document.getElementById("payForm").due.value = todayStr();
   state.editingId = null;
+  state.editingDue = null;
+  updateDueHint();
   // Файлы намеренно не переносим: у нового платежа свой счёт. Приложить забытый
   // файл легко, а оплатить по позапрошлому счёту — уже не исправить.
   state.formFiles = [];
@@ -129,12 +150,14 @@ function resetFormNew() {
   const f = document.getElementById("payForm");
   f.reset();
   state.editingId = null;
+  state.editingDue = null;
   state.formFiles = [];
   renderFormFiles();
   const dueEl = document.querySelector('input[name=due]');
   if (dueEl) dueEl.value = todayStr();
   if (state.TOKEN && state.clientInfo) f.client.value = state.clientInfo.name;
   setFormMode(false);
+  updateDueHint();
 }
 
 // ---------- отправка формы ----------
@@ -157,6 +180,8 @@ async function onSubmit(e) {
   const fileInput = document.getElementById("fileInput");
   const submitBtn = f.querySelector(".submit");
   const wasEditing = !!state.editingId;
+  const editedId = state.editingId;
+  let newId = null;
   submitBtn.disabled = true; submitBtn.textContent = wasEditing ? "Сохраняем…" : "Отправляем…";
 
   // прежние вложения плюс только что выбранные
@@ -184,7 +209,7 @@ async function onSubmit(e) {
       );
     } else if (state.TOKEN) {
       // Шаг 7: через RPC submit_payment — заявка сама привязывается к клиенту и бухгалтеру
-      await submitPaymentByToken(
+      newId = await submitPaymentByToken(
         state.TOKEN,
         f.payee.value.trim(),
         parseFloat(f.amount.value) || 0,
@@ -247,14 +272,19 @@ async function onSubmit(e) {
 
   if (state.TOKEN) {
     resetFormNew(); // сбрасывает editingId, форму, метку кнопки, имя клиента
+    await loadPaymentsByToken(state.TOKEN);
+    // Дату называем ту, что записал сервер: «сегодня» после 17:00 он переносит
+    // (M2.4), и сообщение с выбранной датой соврало бы.
+    const saved = state.items.find(x => String(x.id) === String(wasEditing ? editedId : newId));
+    const realDue = saved && saved.due ? saved.due : sentDue;
+    const moved = realDue !== sentDue ? " Рабочий день бухгалтерии уже закончился, поэтому дата перенесена." : "";
     const ok = document.getElementById("okMsg");
-    ok.textContent = wasEditing
-      ? "✓ Заявка обновлена. Платёж «" + sentPayee + "» на " + fmtDate(sentDue) + " — актуальные данные в очереди."
-      : "✓ Поручение отправлено бухгалтеру. Платёж «" + sentPayee + "» на " + fmtDate(sentDue) + " уже в очереди.";
+    ok.textContent = (wasEditing
+      ? "✓ Заявка обновлена. Платёж «" + sentPayee + "» на " + fmtDate(realDue) + " — актуальные данные в очереди."
+      : "✓ Поручение отправлено бухгалтеру. Платёж «" + sentPayee + "» на " + fmtDate(realDue) + " уже в очереди.") + moved;
     ok.className = "ok-msg show";
     setTimeout(() => { ok.className = "ok-msg"; }, 6000);
     switchView("queue");
-    await loadPaymentsByToken(state.TOKEN);
     // Ниже обещаем «статус виден ниже» — под активным поиском или фильтром
     // «Оплаченные» свежая заявка в список бы не попала, и обещание бы соврало.
     resetClientFilter();
@@ -284,7 +314,12 @@ async function init() {
   state.TOKEN = params.get("t") || null;
 
   const dueEl = document.querySelector('input[name=due]');
-  if (dueEl) dueEl.value = todayStr();
+  if (dueEl) {
+    dueEl.value = todayStr();
+    dueEl.addEventListener("input", updateDueHint);
+    dueEl.addEventListener("change", updateDueHint);
+    updateDueHint();   // вечером форма открывается уже с «сегодня»
+  }
 
   // ----- слушатели -----
   // Окна переписки статичны, а заявка внутри меняется — вешаем по одному разу.
@@ -459,6 +494,19 @@ async function init() {
     if (rotBtn) {
       if (!confirm("Перевыпустить ссылку?\n\nСтарая сразу перестанет работать. У клиента отвалится и Telegram-бот: уведомления об оплате перестанут приходить, пока он не откроет НОВУЮ ссылку на бота и не нажмёт «Старт».\n\nНе забудьте отправить ему обе новые ссылки.")) return;
       rotateClientToken(rotBtn.getAttribute("data-rotate"));
+      return;
+    }
+
+    // «Изменить» (админ) — раскрывает название и бухгалтера под карточкой
+    const edBtn = e.target.closest && e.target.closest("button[data-cledit]");
+    if (edBtn) {
+      const box = document.getElementById("ed-" + edBtn.getAttribute("data-cledit"));
+      if (box) box.hidden = !box.hidden;
+      return;
+    }
+    const edSave = e.target.closest && e.target.closest("button[data-edsave]");
+    if (edSave) {
+      saveClientEdit(edSave.getAttribute("data-edsave"));
       return;
     }
 
