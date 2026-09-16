@@ -3,10 +3,12 @@ name: DB tests
 # Прогоняет pgTAP-тесты бэкенда на чистом стеке Supabase.
 # Публичный репозиторий -> GitHub Actions бесплатны без лимита минут.
 
+# На push в main тесты зовёт deploy.yml — перед публикацией сайта. Отдельного
+# запуска на push здесь нет, чтобы не гонять один и тот же прогон дважды.
 on:
-  push:
-    branches: [ main ]
   pull_request:
+  workflow_call:
+  workflow_dispatch:
 
 jobs:
   test:
@@ -16,8 +18,12 @@ jobs:
 
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@v1
+        # Версия закреплена, а не latest: с 27.08 по 16.09 CI был красным из-за
+        # нового образа Supabase (права анониму на таблицы по умолчанию), и
+        # никто этого не видел — у разработчика стоял старый CLI и всё было
+        # зелёным. Обновлять осознанно и вместе с локальным: scoop update supabase.
         with:
-          version: latest
+          version: 2.117.0
 
       - name: Start local Supabase stack (applies migrations + seed)
         run: supabase start

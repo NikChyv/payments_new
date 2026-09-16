@@ -23,7 +23,7 @@ $env:Path = "$env:USERPROFILE\scoop\shims;$env:Path"     # supabase
 cd c:\Payment-automation-system\payments
 supabase start        # поднять локальный стек
 supabase db reset     # пересобрать БД с нуля: миграции + seed
-supabase test db      # прогнать тесты (ожидается 286 PASS)
+supabase test db      # прогнать тесты (ожидается 290 PASS)
 supabase stop         # остановить (данные сохраняются в docker volume)
 ```
 
@@ -73,7 +73,18 @@ supabase functions deploy notify-payment
 supabase functions deploy telegram-bot
 git push                                      # 3. фронт -> GitHub Pages
 ```
-После пуша фронта Pages обновляется 1–2 минуты.
+**Сайт обновляется только после зелёных тестов** (с 16.09, M11.4). Push в
+main запускает workflow **Deploy site** (`.github/workflows/deploy.yml`):
+тесты бэкенда и сторож секретов → если оба зелёные → публикация. Это 5–7 минут
+от пуша до сайта. Красный прогон — на сайте остаётся прежняя версия, GitHub
+присылает письмо; смотреть Actions → Deploy site.
+
+Работает при настройке **Settings → Pages → Source: GitHub Actions**. Если там
+снова «Deploy from a branch», Pages публикует ветку сам, мимо тестов.
+
+Срочно выкатить фронт при красном CI нельзя и не нужно: красный CI значит, что
+сломано что-то, что до клиентов доезжать не должно. Если причина в самом CI
+(как было с 27.08 по 16.09), чинить CI.
 
 ### 2.3 Ручные шаги (вне миграций)
 - **`send_daily_reminder`** — в проде хранит реальный токен внутри тела, поэтому
@@ -125,6 +136,18 @@ Workflow `.github/workflows/backup.yml` — ежедневно в 02:00 UTC:
 
 Ручной прогон: вкладка Actions → DB backup → Run workflow.
 
+**Файлы Storage** (счета, платёжные документы) — тот же workflow, отдельная job
+`files` (с 16.09, M3.1): `scripts/backup_files.sh` берёт список объектов бакета
+`files` из базы, скачивает каждый по публичной ссылке, пакует в tar.gz и
+шифрует тем же `BACKUP_PASSPHRASE` → артефакт `files-backup` (14 дней). Каждый
+день — полная копия. Новых секретов не нужно.
+
+Если хоть один файл не скачался, job красная, но частичный архив всё равно
+сохраняется. Какие именно не скачались — в логе строками `не скачан:`.
+
+Объём смотреть в логе строкой «Объектов в бакете: …, объём: …». Если архив
+вырастет до гигабайтов — переходить на еженедельную полную копию.
+
 ## 5. Восстановление БД из бэкапа
 
 ```bash
@@ -158,6 +181,26 @@ psql "$SUPABASE_DB_URL" -f restore.sql
 > `schema "public" already exists`, `permission denied to change default privileges`
 > (системные роли Supabase) и `staff_id_fkey` — последняя как раз из-за
 > отсутствующих `auth.users`. На данные это не влияет.
+
+### 5.1 Восстановление файлов Storage
+
+Файлы кладутся обратно **по прежним путям**, поэтому ссылки в заявках снова
+открываются — базу править не нужно. Уже существующие файлы не трогаются,
+скрипт можно запускать повторно.
+
+```bash
+# 1. Actions → DB backup → нужный запуск → скачать артефакт files-backup, распаковать zip
+# 2. Git Bash, из корня репозитория. SB_SECRET_KEY — Project Settings → API Keys → secret
+STORAGE_URL=https://gmvhphuabiyggfurfhmc.supabase.co \
+SB_SECRET_KEY=sb_secret_... \
+BACKUP_PASSPHRASE=... \
+  bash scripts/restore_files.sh files-YYYYMMDD-HHMMSS.tar.gz.gpg
+```
+В конце: «Залито: N, уже были на месте: M, ошибок: 0».
+
+Проверено 16.09 на локальном стеке: бэкап → удаление файлов → восстановление →
+файлы совпали побайтно, в том числе с пробелами и скобками в имени; повторный
+запуск ничего не дублирует.
 
 ### Проверка восстановления (раз в квартал)
 Накатить дамп в **локальный** стек и сверить количество строк с продом:

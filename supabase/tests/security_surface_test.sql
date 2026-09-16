@@ -3,7 +3,7 @@
 -- Единственный путь для anon — SECURITY DEFINER функции по токену.
 
 begin;
-select plan(21);
+select plan(25);
 
 -- ---- RLS включён везде, где есть данные ----
 select ok((select relrowsecurity from pg_class where oid = 'public.payments'::regclass),
@@ -32,6 +32,22 @@ select ok(not has_table_privilege('anon', 'public.payments_audit', 'SELECT'),
           'anon не читает журнал изменений');
 select ok(not has_table_privilege('anon', 'public.rpc_rate_limit', 'SELECT'),
           'anon не читает счётчики лимитов');
+
+-- ---- M6.5 и находка 16.09: таблицы с данными анониму не открыты ----
+-- Клиент ходит только через RPC по токену. На базе, поднятой с нуля свежим
+-- образом Supabase, эти права приходили сами (default privileges) — CI был
+-- красным с 27.08 именно из-за этого.
+select ok(not has_table_privilege('anon', 'public.clients', 'SELECT'),
+          'anon не читает клиентов (там токены кабинетов)');
+select ok(not has_table_privilege('anon', 'public.staff', 'SELECT'),
+          'anon не читает сотрудников');
+select ok(not has_table_privilege('anon', 'public.tg_sessions', 'SELECT'),
+          'anon не читает сессии бота');
+
+-- следующая таблица, заведённая миграцией, тоже не открывается анониму сама
+create table public.surface_probe (id int);
+select ok(not has_table_privilege('anon', 'public.surface_probe', 'SELECT'),
+          'новая таблица в public анониму по умолчанию закрыта');
 
 -- ---- административные и служебные RPC недоступны анониму ----
 -- эти функции SECURITY DEFINER: если у anon есть право на вызов, гейт is_admin()

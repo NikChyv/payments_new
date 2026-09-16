@@ -1,0 +1,73 @@
+name: Deploy site
+
+# Сайт выкатывается на GitHub Pages ТОЛЬКО после зелёных тестов (M11.4).
+#
+# Раньше Pages публиковал ветку main сам, в момент push, параллельно с
+# test.yml. Красный тест приходил, когда клиенты уже получили новую версию, —
+# а 16.09 выяснилось, что CI красный с 27.08 и этого никто не видел: сайт
+# выкатывался всё равно. Теперь цепочка одна: тесты бэкенда и сторож секретов →
+# и только если оба зелёные → публикация. Упало — на сайте остаётся прежняя
+# версия, GitHub присылает письмо.
+#
+# Работа через PR и защита ветки намеренно НЕ введены: выкатывает владелец сам,
+# push в main остаётся привычным. Закрыта именно дыра «сломанное уходит к
+# клиентам раньше тестов».
+#
+# ТРЕБУЕТ одного переключателя в настройках репозитория:
+#   Settings → Pages → Build and deployment → Source: GitHub Actions.
+# Пока там стоит «Deploy from a branch», Pages продолжает публиковать ветку
+# сам, в обход этой цепочки.
+#
+# Порядок деплоя из CLAUDE.md не меняется: db push и functions deploy — ДО
+# git push, этот workflow выкатывает только фронт.
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+# Два push подряд: публикации идут по очереди, а не наперегонки, — иначе
+# более старая сборка могла бы лечь поверх новой.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    uses: ./.github/workflows/test.yml
+
+  scan:
+    uses: ./.github/workflows/secrets.yml
+
+  deploy:
+    needs: [ tests, scan ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: https://nikchyv.github.io/payments_new/app/
+    steps:
+      - uses: actions/checkout@v4
+
+      # Публикуем только то, что открывают люди: приложение (app/) и две
+      # легаси-страницы в корне — на них могли остаться старые закладки.
+      # Миграции, документация и инструменты на сайт не нужны: репозиторий
+      # и так публичный, но сайт — не место для них.
+      # .nojekyll: без него Pages прогнал бы файлы через Jekyll.
+      - name: Собрать сайт
+        run: |
+          set -euo pipefail
+          mkdir _site
+          cp -r app _site/app
+          cp index.html app.html _site/
+          touch _site/.nojekyll
+          find _site -type f | sort
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - uses: actions/deploy-pages@v4

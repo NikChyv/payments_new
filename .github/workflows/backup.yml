@@ -57,3 +57,36 @@ jobs:
           name: db-backup
           path: "*.sql.gz.gpg"
           retention-days: 30
+
+  # Файлы Storage (M3.1): счета клиентов и платёжные документы. Дамп выше
+  # хранит только заявки со ссылками на них. Новых секретов не нужно: список
+  # объектов — через тот же SUPABASE_DB_URL, сами файлы — по публичным ссылкам
+  # (бакет публичный), шифрование — тем же BACKUP_PASSPHRASE.
+  # Отдельной job, чтобы сбой скачивания файлов не отменял бэкап базы.
+  files:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download, archive, encrypt
+        env:
+          SUPABASE_DB_URL:   ${{ secrets.SUPABASE_DB_URL }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+          STORAGE_URL:       https://gmvhphuabiyggfurfhmc.supabase.co
+        run: |
+          set -euo pipefail
+          # для простого select хватает предустановленного на раннере psql
+          psql "$SUPABASE_DB_URL" -At \
+            -c "select name from storage.objects where bucket_id = 'files' order by name" > objects.txt
+          bash scripts/backup_files.sh objects.txt "files-$(date +%Y%m%d-%H%M%S).tar.gz.gpg"
+
+      # always(): даже если часть файлов не скачалась, частичную копию сохраняем,
+      # а прогон остаётся красным
+      - name: Upload encrypted files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: files-backup
+          path: "files-*.tar.gz.gpg"
+          if-no-files-found: error
+          retention-days: 14
