@@ -18,5 +18,6 @@ export const state = {
   // должен остаться тем же, что выбрал человек.
   clQuery: "",          // строка поиска по получателю и реквизитам
   clFilter: "all",      // "all" | "open" (new+in_progress) | "done" (paid+sent)
+  clSort: "desc",       // порядок по дате платежа: "desc" — сначала новые, "asc" — сначала старые
   _pollStarted: false,
 };

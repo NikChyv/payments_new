@@ -79,10 +79,14 @@
                  placeholder="Поиск: получатель, УНП, реквизиты"
                  aria-label="Поиск по получателю и реквизитам">
         </label>
-        <div class="cl-chips" id="clChips" role="group" aria-label="Фильтр по статусу">
-          <button type="button" class="cl-chip on" data-clf="all"  aria-pressed="true">Все <span class="cnt">0</span></button>
-          <button type="button" class="cl-chip"    data-clf="open" aria-pressed="false">Запланированные <span class="cnt">0</span></button>
-          <button type="button" class="cl-chip"    data-clf="done" aria-pressed="false">Оплаченные <span class="cnt">0</span></button>
+        <div class="cl-row">
+          <div class="cl-chips" id="clChips" role="group" aria-label="Фильтр по статусу">
+            <button type="button" class="cl-chip on" data-clf="all"  aria-pressed="true">Все <span class="cnt">0</span></button>
+            <button type="button" class="cl-chip"    data-clf="open" aria-pressed="false">Запланированные <span class="cnt">0</span></button>
+            <button type="button" class="cl-chip"    data-clf="done" aria-pressed="false">Оплаченные <span class="cnt">0</span></button>
+          </div>
+          <!-- порядок по дате платежа; подпись ставит renderClient() -->
+          <button type="button" class="cl-chip cl-sort" id="clSort">↓ Сначала новые</button>
         </div>
         <div class="cl-shown" id="clShown"></div>
       </div>

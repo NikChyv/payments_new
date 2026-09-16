@@ -409,6 +409,16 @@ async function init() {
     state.clFilter = btn.getAttribute("data-clf");
     renderClient();
   });
+  // Порядок запоминаем в браузере клиента: выбрал «сначала старые» — так и
+  // открывается в следующий раз. Хранилище может быть недоступно (приватный
+  // режим) — тогда просто работает порядок по умолчанию.
+  try { if (localStorage.getItem("clSort") === "asc") state.clSort = "asc"; } catch (e) {}
+  const clSort = document.getElementById("clSort");
+  if (clSort) clSort.addEventListener("click", () => {
+    state.clSort = state.clSort === "asc" ? "desc" : "asc";
+    try { localStorage.setItem("clSort", state.clSort); } catch (e) {}
+    renderClient();
+  });
 
   document.getElementById("search").addEventListener("input", render);
   document.getElementById("fClient").addEventListener("change", render);

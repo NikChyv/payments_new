@@ -274,6 +274,12 @@ function syncClientTools(all) {
   const search = document.getElementById("clSearch");
   if (search && search.value !== state.clQuery) search.value = state.clQuery;
 
+  const sort = document.getElementById("clSort");
+  if (sort) {
+    sort.textContent = state.clSort === "asc" ? "↑ Сначала старые" : "↓ Сначала новые";
+    sort.title = "Порядок по дате платежа — нажмите, чтобы поменять";
+  }
+
   box.querySelectorAll("button[data-clf]").forEach(btn => {
     const f = btn.getAttribute("data-clf");
     const on = state.clFilter === f;
@@ -305,15 +311,17 @@ export function renderClient() {
   // «Повторить» и «Редактировать» ищут заявку именно в нём, а не в DOM.
   const rows = all.filter(it => inGroup(it) && clMatch(it, q));
 
-  // Пока не ищут — привычный порядок: открытые сверху, внутри группы по сроку.
-  // Как только в поиске что-то ввели — свежие сверху: ищут обычно недавнее.
-  rows.sort(q
-    ? (a, b) => (a.due < b.due ? 1 : a.due > b.due ? -1 : 0)
-    : (a, b) => {
-        const ao = activeOpen(a) ? 0 : 1, bo = activeOpen(b) ? 0 : 1;
-        if (ao !== bo) return ao - bo;
-        return a.due < b.due ? -1 : a.due > b.due ? 1 : 0;
-      });
+  // Порядок по дате платежа выбирает сам клиент, по умолчанию сначала новые:
+  // раньше оплаченные шли от старых к новым, и свежий платёж приходилось
+  // листать в самый низ. Запланированные при этом всегда выше оплаченных —
+  // иначе просроченный неоплаченный платёж со старой датой утонул бы среди
+  // давно закрытых.
+  const dir = state.clSort === "asc" ? 1 : -1;
+  rows.sort((a, b) => {
+    const ao = activeOpen(a) ? 0 : 1, bo = activeOpen(b) ? 0 : 1;
+    if (ao !== bo) return ao - bo;
+    return a.due < b.due ? -dir : a.due > b.due ? dir : 0;
+  });
 
   // Тихая подсказка: видно, что часть платежей скрыта фильтром, а не пропала.
   const shown = document.getElementById("clShown");
