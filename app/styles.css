@@ -91,8 +91,9 @@ header{background:var(--accent);position:sticky;top:0;z-index:20}
 .tab:hover{color:var(--on-accent);background:var(--hdr-hover)}
 .tab.active{color:var(--on-accent);background:var(--hdr-on)}
 .tab:focus-visible{outline:2px solid var(--on-accent);outline-offset:2px}
-main{padding:22px 0 60px}
-.ghost{margin-left:auto;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px 14px;cursor:pointer;font-size:13px;color:var(--muted)}
+/* с классом: у <main> стоит .wrap, и её padding:0 20px перебивал простой
+   main{padding} — до шага 7 экраны прилипали к шапке */
+main.wrap{padding-top:16px;padding-bottom:60px}
 .btn{border:none;border-radius:10px;padding:9px 12px;font-size:13.5px;font-weight:600;cursor:pointer;text-align:center}
 .btn.p{background:var(--accent);color:var(--on-accent)} .btn.p:hover{background:var(--accent-d)}
 .btn.p:disabled{opacity:.6;cursor:default}
@@ -112,8 +113,6 @@ main{padding:22px 0 60px}
 .hint{font-size:12px;color:var(--muted);margin-top:5px}
 .submit{width:100%;background:var(--accent);color:var(--on-accent);border:none;border-radius:11px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;margin-top:6px}
 .submit:hover{background:var(--accent-d)}
-.ok-msg{display:none;background:var(--green-bg);color:var(--green);border:1px solid var(--green-line-msg);border-radius:11px;padding:13px 16px;margin-bottom:18px;font-weight:600;font-size:14px;text-align:center}
-.ok-msg.show{display:block}
 /* toast */
 #toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--ink);color:var(--on-accent);
   padding:12px 20px;border-radius:12px;font-size:14px;opacity:0;transition:.25s;pointer-events:none;z-index:50;box-shadow:var(--shadow-toast)}
@@ -187,9 +186,7 @@ body.client-mode{--bg:var(--c-bg);--ink:var(--c-ink);--line:var(--c-line);--line
    липкая: на телефоне заняла бы четверть экрана */
 body.client-mode header{position:static}
 body.client-mode .wrap{max-width:780px}
-/* main{padding} сверху файла перебивает .wrap (класс сильнее тега) — возвращаем
-   кабинету воздух между шапкой и заголовком */
-body.client-mode main.wrap{padding-top:22px;padding-bottom:60px}
+body.client-mode main.wrap{padding-top:22px}
 body.client-mode .topbar{flex-wrap:wrap;gap:12px;min-height:0;padding:14px 0 0}
 body.client-mode .plate{width:38px;height:38px}
 body.client-mode .logo{width:27px;height:27px}
@@ -353,13 +350,16 @@ body.client-mode .submit{height:52px;padding:0;border-radius:12px;font-size:16px
   .c-bar{width:14px}
   body.client-mode .form{padding:17px;border-radius:14px}
 }
-/* вход сотрудника */
-#view-login{max-width:380px;margin:48px auto 0}
-.login-card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:26px}
-.login-card h2{margin:0 0 6px;font-size:19px}
-.login-card p{margin:0 0 18px;color:var(--muted);font-size:13.5px}
-.login-card input{width:100%;padding:11px 13px;border:1px solid var(--line);border-radius:10px;font-size:14px;margin-bottom:12px}
-.login-card button{width:100%;background:var(--accent);color:var(--on-accent);border:none;border-radius:11px;padding:12px;font-size:15px;font-weight:700;cursor:pointer}
+/* вход сотрудника (шаг 7): карточка как лист очереди, подписи над полями —
+   плейсхолдер вместо подписи пропадает, как только начинаешь печатать */
+#view-login{max-width:400px;margin:40px auto 0}
+.login-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:26px 26px 22px;box-shadow:var(--shadow-sheet)}
+.login-card h2{margin:0 0 5px;font-size:21px;font-weight:600;letter-spacing:-.02em}
+.login-card p{margin:0 0 20px;color:var(--muted);font-size:13px;line-height:1.45}
+.login-card label{display:block;font-size:12.5px;font-weight:600;color:var(--soft-ink);margin:0 0 6px}
+.login-card input{width:100%;padding:10px 12px;border:1px solid var(--line-strong);border-radius:8px;font-size:14px;margin-bottom:14px;background:var(--card);color:var(--ink)}
+.login-card input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(var(--accent-rgb),.14)}
+.login-card button{width:100%;background:var(--accent);color:var(--on-accent);border:none;border-radius:8px;padding:11px;font-size:14.5px;font-weight:600;cursor:pointer;margin-top:4px}
 .login-card button:hover{background:var(--accent-d)}
 .login-err{color:var(--red);font-size:13px;margin-top:8px;min-height:18px}
 .staff-box{display:flex;align-items:center;gap:12px;margin-left:auto;font-size:13px;color:var(--hdr-who)}
@@ -367,20 +367,6 @@ body.client-mode .submit{height:52px;padding:0;border-radius:12px;font-size:16px
 .staff-box .role{color:var(--hdr-who)}
 .staff-box button{background:none;border:1px solid var(--hdr-line);border-radius:7px;padding:6px 12px;cursor:pointer;font-size:13px;color:var(--hdr-out)}
 .staff-box button:hover{background:var(--hdr-hover2);color:var(--on-accent)}
-/* экран «Клиенты» */
-.clients-add{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;margin-bottom:16px}
-.ca-row{display:flex;gap:10px;flex-wrap:wrap}
-.ca-row input{flex:1;min-width:200px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;font-size:14px}
-.ca-row select{padding:10px 12px;border:1px solid var(--line);border-radius:10px;font-size:14px;background:var(--card)}
-.ca-row button{background:var(--accent);color:var(--on-accent);border:none;border-radius:10px;padding:10px 18px;font-weight:700;cursor:pointer}
-.ca-row button:hover{background:var(--accent-d)}
-.cl-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:10px}
-.cl-card .nm{font-weight:700;font-size:15px}
-.cl-card .who{color:var(--muted);font-size:13px;margin-top:3px}
-.cl-link{display:flex;gap:8px;align-items:center;margin-top:10px}
-.cl-link code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:var(--soft);border-radius:8px;padding:8px 10px;font-size:12.5px;color:var(--soft-ink)}
-.cl-link button{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:13px;color:var(--accent);font-weight:600;white-space:nowrap}
-.cl-link button:hover{border-color:var(--accent)}
 /* приложенные файлы в форме заявки */
 .file-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .file-chip{display:inline-flex;align-items:center;gap:6px;background:var(--soft);border:1px solid var(--line);
@@ -389,13 +375,77 @@ body.client-mode .submit{height:52px;padding:0;border-radius:12px;font-size:16px
 .file-chip .x{background:none;border:0;cursor:pointer;color:var(--muted);font-size:13px;line-height:1;padding:0 2px}
 .file-chip .x:hover{color:var(--red)}
 
-.cl-tools{display:flex;gap:8px;align-items:center;margin-top:8px}
-.cl-tools button{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap}
-.cl-exp{color:var(--green)}
-.cl-exp:hover{border-color:var(--green)}
-.cl-del{margin-left:auto;color:var(--red)}
-.cl-del:hover{border-color:var(--red);background:var(--red-bg)}
-.cl-period{display:flex;gap:8px;align-items:center;margin-top:10px;padding:10px 12px;background:var(--sunk);border:1px solid var(--line);border-radius:10px;font-size:13px;color:var(--muted);flex-wrap:wrap}
+
+/* ===== Экран «Клиенты» — направление B (редизайн, шаг 7) =====
+   Таблица, как очередь: клиент со статусом бота, бухгалтер, ссылка, число
+   заявок, действия ссылками. Выгрузка и правка раскрываются строкой ниже. */
+.k-top{display:flex;align-items:flex-end;justify-content:space-between;gap:14px 32px;flex-wrap:wrap;margin-bottom:18px}
+.k-top h2{margin:0;font-size:23px;font-weight:600;letter-spacing:-.022em;line-height:1.2}
+.k-top p{margin:5px 0 0;font-size:13px;color:var(--muted)}
+.k-add{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+.k-add input,.k-add select{border:1px solid var(--line-strong);border-radius:8px;padding:9px 12px;font-size:13.5px;background:var(--card);color:var(--ink)}
+.k-add input{width:290px;max-width:100%}
+.k-add button,.k-sub button{background:var(--accent);color:var(--on-accent);border:0;border-radius:8px;padding:10px 20px;font-size:13.5px;font-weight:600;cursor:pointer}
+.k-add button:hover,.k-sub button:hover{background:var(--accent-d)}
+.k-add .login-err{flex-basis:100%;margin:0;min-height:0}
+.k-add .login-err:empty{display:none}
+.k-sheet{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-sheet)}
+/* ширины колонок — из макета; «Действия» — по самому длинному набору ссылок админа */
+.k-hrow,.k-row{display:grid;grid-template-columns:minmax(0,1fr) 150px 250px 80px 330px;align-items:center;padding:0 20px;border-bottom:1px solid var(--line)}
+.k-hrow{background:var(--sunk)}
+.k-hrow div{font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding:11px 14px}
+.k-hrow div:first-child{padding-left:0}
+.k-hrow div:last-child{padding-right:0}
+.k-hrow .r,.k-c-cnt{text-align:right}
+.k-row > div{padding:12px 14px;min-width:0}
+.k-row > div:first-child{padding-left:0}
+.k-row > div:last-child{padding-right:0}
+.k-nm{font-size:14px;font-weight:600;letter-spacing:-.008em;overflow-wrap:anywhere}
+.k-bot{display:inline-flex;align-items:center;gap:6px;margin-top:3px;font-size:11.5px}
+.k-bot svg{flex:none}
+.k-bot.ok{color:var(--green)}
+.k-bot.no{color:var(--amber)}
+.k-c-staff{font-size:13.5px}
+.k-c-link code{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:var(--soft);border-radius:6px;
+  padding:6px 9px;font-size:11.5px;color:var(--muted)}
+.k-c-cnt{font-size:13.5px}
+.k-c-cnt.zero{color:var(--faint)}
+/* подписи «Бухгалтер», «Заявок» нужны только в карточке на узком экране */
+.k-lbl{display:none}
+.k-c-acts{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:4px 14px}
+.k-act{background:none;border:0;padding:4px 0;font-size:12.5px;font-weight:600;color:var(--accent);cursor:pointer;white-space:nowrap}
+.k-act:hover{text-decoration:underline}
+.k-act.green{color:var(--green)}
+.k-act.red{color:var(--red)}
+.k-act:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
+.k-sub{display:flex;align-items:center;gap:10px 12px;flex-wrap:wrap;padding:13px 20px;background:var(--sunk);border-bottom:1px solid var(--line);
+  font-size:13px;color:var(--muted)}
+.k-sub[hidden]{display:none}
+.k-sub input,.k-sub select{border:1px solid var(--line-strong);border-radius:7px;padding:7px 10px;font-size:13px;color:var(--ink);background:var(--card)}
+.k-sub input[data-edname]{flex:1;min-width:200px}
+.k-sub button{padding:8px 17px;font-size:13px}
+.k-sum{font-size:12.5px}
+.k-foot{display:flex;justify-content:space-between;gap:6px 16px;flex-wrap:wrap;padding:12px 20px;background:var(--sunk);font-size:12px;color:var(--muted)}
+.k-empty{text-align:center;color:var(--muted);padding:50px 0}
+/* уже 1180 таблица в пять колонок не влезает — карточка на клиента */
+@media(max-width:1180px){
+  .k-hrow{display:none}
+  .k-row{grid-template-columns:minmax(0,1fr) auto;gap:6px 16px;padding:14px 16px}
+  .k-row > div,.k-row > div:first-child,.k-row > div:last-child{padding:0}
+  .k-c-name,.k-c-link,.k-c-acts{grid-column:1 / -1}
+  .k-c-staff,.k-c-cnt{font-size:13px}
+  .k-c-cnt{text-align:left}
+  .k-c-acts{justify-content:flex-start}
+  .k-lbl{display:inline;color:var(--muted);margin-right:6px}
+  .k-sub,.k-foot{padding:12px 16px}
+  .k-add{width:100%}
+  .k-add input{flex:1;width:auto;min-width:0}
+}
+@media(max-width:560px){
+  /* на телефоне название — своей строкой, иначе от поля остаётся «Назв» */
+  .k-add input{flex-basis:100%}
+  .k-add select{flex:1;min-width:0}
+}
 
 /* ===== Переписка по заявке =====
    Окна лежат вне #list: он перерисовывается поллингом раз в 15 секунд, и
@@ -407,7 +457,15 @@ body.client-mode .submit{height:52px;padding:0;border-radius:12px;font-size:16px
 .ovl-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:14px}
 .ovl-title{font-size:17px;font-weight:700;line-height:1.2}
 .ovl-sub{font-size:13px;color:var(--muted);margin-top:3px}
-.ovl-amount{font-size:16px;font-weight:700;white-space:nowrap}
+/* сводка заявки в окне переписки: получатель и сумма, ниже клиент и срок */
+.ovl-sum{background:var(--sunk);border:1px solid var(--line);border-radius:10px;padding:10px 13px;margin-bottom:14px}
+.ovl-sum .l1{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.ovl-sum b{font-size:15px;font-weight:700;letter-spacing:-.015em;overflow-wrap:anywhere}
+.ovl-sum b.num{white-space:nowrap}
+.ovl-sum .l2{font-size:12.5px;color:var(--muted);margin-top:3px;overflow-wrap:anywhere}
+/* «Отмена» и «Напомнить» — обводкой, главное действие — заливкой */
+.ovl-btns .btn.soft{background:var(--card);border:1px solid var(--line-strong);color:var(--soft-ink)}
+.ovl-btns .btn.soft:hover{border-color:var(--accent);color:var(--accent)}
 .ovl-btns{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}
 .ovl-btns .btn.soft[data-th="remind"]{margin-right:auto}
 .ovl-card textarea{width:100%;padding:11px 13px;border:1px solid var(--line);border-radius:10px;
@@ -427,11 +485,11 @@ body.client-mode .submit{height:52px;padding:0;border-radius:12px;font-size:16px
 .th-file{display:inline-flex;align-items:center;gap:5px;background:var(--card);border:1px solid var(--line);
   border-radius:8px;padding:4px 8px;font-size:12px;color:var(--soft-ink);text-decoration:none;overflow-wrap:anywhere}
 .th-file:hover{border-color:var(--accent);color:var(--accent)}
-.th-label{display:block;font-size:13px;font-weight:600;margin:0 0 6px}
+.th-label{display:block;font-size:12px;font-weight:600;color:var(--soft-ink);margin:0 0 6px}
 .th-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
-.th-chip{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:6px 10px;
+.th-chip{background:var(--card);border:1px solid var(--line-strong);border-radius:8px;padding:6px 10px;
   font-size:12.5px;color:var(--soft-ink);cursor:pointer;text-align:left;font-family:inherit}
-.th-chip:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-tint)}
+.th-chip:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-bg)}
 .th-warn{background:var(--amber-bg);color:var(--amber);border-radius:10px;padding:10px 12px;
   font-size:12.5px;line-height:1.45;margin-bottom:14px}
 
@@ -444,11 +502,6 @@ body.client-mode .submit{height:52px;padding:0;border-radius:12px;font-size:16px
   .ovl-btns .btn{flex:1}
   .ovl-btns .btn.soft[data-th="remind"]{flex-basis:100%}
 }
-.cl-period input,.cl-period select{border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:13px;color:var(--ink);background:var(--card)}
-.cl-period input[data-edname]{flex:1;min-width:180px}
-.cl-period button{background:var(--accent);color:var(--on-accent);border:none;border-radius:9px;padding:8px 16px;font-weight:700;font-size:13px;cursor:pointer}
-.cl-period button:hover{background:var(--accent-d)}
-.cl-period[hidden]{display:none}
 
 /* ===== Очередь бухгалтера — направление B «Выписка» (редизайн, шаг 5) =====
    Перенесено из утверждённого пробника B и пробника переписки. Классы с

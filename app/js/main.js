@@ -3,7 +3,7 @@ import { state } from './state.js';
 import { todayStr, fmtDate, workingDueFor, fmtDateDow } from './dates.js';
 import { esc, toast, genId } from './utils.js';
 import { onLoggedIn, doLogin, doLogout } from './auth.js';
-import { addClient, refreshClients, rotateClientToken, deleteClientById, renderClients, saveClientEdit } from './clients.js';
+import { addClient, refreshClients, rotateClientToken, deleteClientById, renderClients, saveClientEdit, exportPreview } from './clients.js';
 import { exportClientPayments } from './export.js';
 import { render, onListClick, initQueue } from './queue.js';
 import {
@@ -118,6 +118,9 @@ function fillFormForEdit(it) {
   document.getElementById("payForm").due.value = it.due || todayStr();
   state.editingId = it.id;
   state.editingDue = it.due || null;
+  // набор файлов в базе на момент открытия — условие записи правки (M7.1);
+  // у только что заведённой в этой вкладке заявки filesRaw ещё нет
+  state.editingFiles = (it.filesRaw || it.files || []).slice();
   setFormMode("edit");
   updateDueHint();
   switchView("form");
@@ -178,6 +181,32 @@ function resetFormNew() {
 }
 
 // ---------- отправка формы ----------
+
+// M7.1. Пока бухгалтер правил заявку, её файлы поменялись — чаще всего клиент
+// приложил счёт ответом на вопрос. Правка не записана. Форму не закрываем и
+// набранное не трогаем, а сводим файлы: что добавили в базе — в форму, что там
+// убрали — из формы, только что загруженное сейчас — оставляем. Человек видит
+// итог и сохраняет ещё раз.
+function filesChangedMeanwhile(it, fresh, uploaded, fileInput) {
+  if (!fresh) {
+    state.items = state.items.filter(x => x !== it);
+    toast("Заявку удалили, пока вы её правили — сохранять некуда");
+    return;
+  }
+  const seenUrls   = new Set((state.editingFiles || []).map(x => x.url));
+  const serverUrls = new Set(fresh.filesRaw.map(x => x.url));
+  const added = fresh.filesRaw.filter(x => !seenUrls.has(x.url));
+  state.formFiles = (state.formFiles || []).filter(x => serverUrls.has(x.url))
+    .concat(uploaded, added);
+  state.editingFiles = fresh.filesRaw.slice();
+  // загруженное уже лежит в formFiles — второй раз из поля его не грузим
+  if (fileInput) fileInput.value = "";
+  renderFormFiles();
+  Object.assign(it, fresh);   // очередь за формой — уже по базе
+  toast(added.length
+    ? `Пока вы правили, в заявку добавили: ${added.map(x => x.name || "файл").join(", ")}. Файл теперь в форме — проверьте и сохраните ещё раз`
+    : "Файлы заявки тем временем изменили — форма обновлена, проверьте и сохраните ещё раз");
+}
 
 // Работаем пн–пт: будущий платёж на сб/вс не проводится. Сегодняшний выходной
 // сервер сам перенесёт на ближайший рабочий день, поэтому его не блокируем.
@@ -241,18 +270,29 @@ async function onSubmit(e) {
       // сотрудник правит существующую заявку
       const it = state.items.find(x => String(x.id) === String(state.editingId));
       if (!it) throw new Error("Заявка не найдена");
-      it.payee       = f.payee.value.trim();
-      it.amount      = parseFloat(f.amount.value) || 0;
-      it.requisites  = f.requisites.value.trim();
-      it.due         = f.due.value;
-      it.recurrence  = f.recurrence.value;
-      it.purpose     = f.purpose.value.trim();
-      it.needReceipt = f.needReceipt.checked;
-      it.files       = files;
+      // Правим копию: не прошла запись — в очереди должна остаться заявка из
+      // базы, а не то, что набрано в форме.
+      const draft = {
+        ...it,
+        payee:       f.payee.value.trim(),
+        amount:      parseFloat(f.amount.value) || 0,
+        requisites:  f.requisites.value.trim(),
+        due:         f.due.value,
+        recurrence:  f.recurrence.value,
+        purpose:     f.purpose.value.trim(),
+        needReceipt: f.needReceipt.checked,
+        files,
+      };
       // Статус форма не показывает и не меняет, поэтому и не пишем его: раньше
       // сюда уезжал статус из момента открытия формы и откатывал чужое
       // «Отметить оплаченным» (M1.2).
-      await updateContentRemote(it);
+      const r = await updateContentRemote(draft, state.editingFiles);
+      if (!r.ok) {
+        filesChangedMeanwhile(it, r.current, uploaded, fileInput);
+        submitBtn.disabled = false; setFormMode(formMode);
+        return;
+      }
+      Object.assign(it, draft);
     } else {
       // сотрудник заводит заявку: для своего клиента или личную напоминалку
       const sel = document.getElementById("ncFormClient");
@@ -313,18 +353,14 @@ async function onSubmit(e) {
     toast(wasEditing ? "Заявка обновлена" : "Заявка отправлена — статус виден ниже");
   } else {
     resetFormNew();
-    const ok = document.getElementById("okMsg");
-    ok.textContent = wasEditing
-      ? "✓ Заявка обновлена: «" + sentPayee + "» на " + fmtDate(sentDue) + "."
-      : "✓ Поручение отправлено бухгалтеру. Платёж «" + sentPayee + "» на " + fmtDate(sentDue) + " уже в очереди.";
-    ok.className = "ok-msg show";
-    setTimeout(() => { ok.className = "ok-msg"; }, 6000);
     refreshClients();
     // и после правки, и после новой заявки возвращаем в очередь: иначе сотрудник
-    // остаётся на форме и не видит результата — особенно заметно на дубликате
+    // остаётся на форме и не видит результата — особенно заметно на дубликате.
+    // Итог — всплывашкой: зелёная плашка стояла на форме, которая к этому
+    // моменту уже скрыта, и её не видел никто.
     switchView("queue");
     render();
-    toast(wasEditing ? "Заявка обновлена" : "Заявка добавлена в очередь");
+    toast(`«${sentPayee}» на ${fmtDate(sentDue)} — ` + (wasEditing ? "заявка обновлена" : "заявка добавлена в очередь"));
   }
 }
 
@@ -498,14 +534,24 @@ async function init() {
 
   document.getElementById("ncAdd").addEventListener("click", addClient);
 
+  // сменили даты выгрузки — пересчитать «N заявок · сумма»
+  document.getElementById("clientsList").addEventListener("input", e => {
+    const d = e.target.closest && e.target.closest("input[data-from], input[data-to]");
+    if (d) exportPreview(d.getAttribute("data-from") || d.getAttribute("data-to"));
+  });
+
   document.getElementById("clientsList").addEventListener("click", e => {
     const copyBtn = e.target.closest && e.target.closest("button[data-copy]");
     if (copyBtn) {
       const link = copyBtn.getAttribute("data-copy");
+      // Ссылка в таблице сокращена, поэтому если буфер недоступен (нет API или
+      // браузер отказал — окно не в фокусе, запрещено правами), даём её целиком
+      // скопировать руками. Раньше отказ writeText тонул молча.
+      const byHand = () => prompt("Скопируйте ссылку клиента:", link);
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(link).then(() => toast("Ссылка скопирована"));
+        navigator.clipboard.writeText(link).then(() => toast("Ссылка скопирована"), byHand);
       } else {
-        toast("Скопируйте ссылку вручную");
+        byHand();
       }
       return;
     }
@@ -529,11 +575,13 @@ async function init() {
       return;
     }
 
-    // «Выгрузить в Excel» — раскрывает выбор периода под карточкой
+    // «Excel» — раскрывает выбор периода под строкой клиента
     const expBtn = e.target.closest && e.target.closest("button[data-export]");
     if (expBtn) {
-      const box = document.getElementById("per-" + expBtn.getAttribute("data-export"));
+      const cid = expBtn.getAttribute("data-export");
+      const box = document.getElementById("per-" + cid);
       if (box) box.hidden = !box.hidden;
+      if (box && !box.hidden) exportPreview(cid);
       return;
     }
 

@@ -48,6 +48,10 @@ export function fromRow(r) {
     requisites: r.requisites || "", due: r.due, recurrence: r.recurrence,
     purpose: r.purpose || "", status: r.status, needReceipt: !!r.need_receipt,
     files,
+    // Набор файлов ровно как в базе — без подставленного выше зеркала старых
+    // колонок. По нему правка формой проверяет, что файлы не меняли, пока
+    // форма была открыта (M7.1): сравнение идёт с базой, а не с нашим видом.
+    filesRaw: Array.isArray(r.files) ? r.files : [],
     created: r.created_at, client_id: r.client_id || null,
     autoCreated: !!r.auto_created,
     createdByStaff: r.created_by_staff || null,
@@ -190,13 +194,20 @@ export async function changeStatusRemote(it, from, to, seenPaid) {
 // Правка содержания сотрудником. Статус не трогаем вовсе — значит параллельное
 // «Отметить оплаченным» из соседней вкладки переживёт эту правку.
 //
-// Что здесь осталось честным компромиссом: набор файлов заменяется тем, что
-// в форме. Если клиент приложит файл, пока форма открыта, этот файл уйдёт —
-// но уже осознанно, а не заодно со всей очередью.
-export async function updateContentRemote(it) {
-  if (!useRemote) { _saveLocal(); return; }
-  const res = await sb.from(TABLE).update(contentRow(it)).eq("id", it.id);
+// Набор файлов форма пишет целиком, поэтому запись идёт с условием «файлы в
+// базе те же, что были, когда форму открыли» (M7.1). Клиент мог за это время
+// приложить счёт ответом на вопрос — без условия правка молча его стёрла бы.
+// Не совпало — ничего не пишем и отдаём свежую заявку: форма добавит новые
+// файлы к себе, и человек сохранит ещё раз уже с ними.
+export async function updateContentRemote(it, seenFiles) {
+  if (!useRemote) { _saveLocal(); return {ok: true}; }
+  const res = await sb.from(TABLE).update(contentRow(it))
+    .eq("id", it.id).eq("files", JSON.stringify(seenFiles || []))
+    .select();
   if (res.error) throw res.error;
+  if (!res.data || !res.data.length) return {ok: false, current: await refetch(it.id)};
+  Object.assign(it, fromRow(res.data[0]));
+  return {ok: true};
 }
 
 // Документ бухгалтера: пишем вложения и статус одной строкой, с проверкой

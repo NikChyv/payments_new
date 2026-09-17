@@ -9,7 +9,7 @@ import { state } from './state.js';
 import { isoLocal, fmtDate } from './dates.js';
 import { toast } from './utils.js';
 import { buildXlsx, downloadBlob } from './xlsx.js';
-import { recLbl, stLbl } from './queue.js';
+import { recLbl, stLbl, restOf, activeOpen } from './queue.js';
 
 const COLUMNS = [
   {title: "Дата",          width: 12,   type: "date"},
@@ -20,6 +20,36 @@ const COLUMNS = [
   {title: "Периодичность", width: 15,   type: "text"},
   {title: "Статус",        width: 18,   type: "text"},
 ];
+
+// Колонки оплаты по частям. Появляются, только если в периоде есть хоть одна
+// частичная оплата: у большинства клиентов частей не бывает, и два столбца
+// нулей в графике, который уходит клиенту, только путали бы.
+const PART_COLUMNS = [
+  {title: "Оплачено, Br",  width: 14,   type: "money"},
+  {title: "Остаток, Br",   width: 14,   type: "money"},
+];
+
+// Оплачено — по частям, если они были; иначе закрытая заявка оплачена
+// целиком, открытая — ничем. Остаток — только у открытой: закрытую с
+// недоплатой больше не платят, и «долг» в графике был бы неправдой.
+function paidFor(it) {
+  if (Number(it.paidAmount) > 0) return Number(it.paidAmount);
+  return activeOpen(it) ? 0 : Number(it.amount) || 0;
+}
+
+function statusFor(it) {
+  const partial = Number(it.paidAmount) > 0 && restOf(it) > 0;
+  if (!partial) return stLbl[it.status] || "";
+  return activeOpen(it) ? "Оплачено частично" : (stLbl[it.status] || "") + " · с недоплатой";
+}
+
+// Строки выгрузки за период. Отдельно от сборки файла — ими же панель
+// выгрузки показывает «N заявок · сумма» до скачивания.
+export function exportRows(clientId, from, to) {
+  return state.items
+    .filter(it => it.client_id === clientId && it.due >= from && it.due <= to)
+    .sort((a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : 0));
+}
 
 // Период по умолчанию — текущий месяц.
 export function monthRange() {
@@ -48,25 +78,24 @@ export function exportClientPayments(clientId, from, to) {
   if (!from || !to) { toast("Укажите период"); return; }
   if (from > to)   { toast("Начало периода позже конца"); return; }
 
-  const rows = state.items
-    .filter(it => it.client_id === clientId && it.due >= from && it.due <= to)
-    .sort((a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : 0))
-    .map(it => [
-      it.due,
-      it.payee || "",
-      Number(it.amount) || 0,
-      it.purpose || "",
-      it.requisites || "",
-      recLbl[it.recurrence] || "",
-      stLbl[it.status] || "",
-    ]);
+  const items = exportRows(clientId, from, to);
+  if (!items.length) { toast("За выбранный период платежей нет"); return; }
 
-  if (!rows.length) { toast("За выбранный период платежей нет"); return; }
+  const withParts = items.some(it => Number(it.paidAmount) > 0);
+  const rows = items.map(it => [
+    it.due,
+    it.payee || "",
+    Number(it.amount) || 0,
+    it.purpose || "",
+    it.requisites || "",
+    recLbl[it.recurrence] || "",
+    statusFor(it),
+  ].concat(withParts ? [paidFor(it), activeOpen(it) ? restOf(it) : 0] : []));
 
   const blob = buildXlsx({
     sheet: "График платежей",
     title: client.name + " · график платежей " + fmtDate(from) + " — " + fmtDate(to),
-    columns: COLUMNS,
+    columns: withParts ? COLUMNS.concat(PART_COLUMNS) : COLUMNS,
     rows,
     total: true,
   });

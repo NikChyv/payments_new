@@ -1,7 +1,11 @@
 import { sb, useRemote, load } from './supabase.js';
 import { state } from './state.js';
 import { esc, toast } from './utils.js';
-import { monthRange } from './export.js';
+import { monthRange, exportRows } from './export.js';
+import { fmtMoney } from './dates.js';
+
+const SVG_OK   = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+const SVG_WARN = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 8v5"/><path d="M12 16.5v.5"/><circle cx="12" cy="12" r="9"/></svg>';
 
 export function baseLink(token) {
   return location.origin + location.pathname + "?t=" + encodeURIComponent(token);
@@ -40,6 +44,35 @@ export function staffNameById(sid) {
   return s ? s.name : "—";
 }
 
+// Ссылка в таблице — сокращённой: целиком она не влезает и не читается, а
+// копируется всё равно полная (кнопка «Копировать», полная — в подсказке).
+function shortLink(token) {
+  const t = String(token || "");
+  return "…/app/?t=" + (t.length > 10 ? t.slice(0, 4) + "…" + t.slice(-4) : t);
+}
+
+const plural = (n, one, few, many) => {
+  const n10 = n % 10, n100 = n % 100;
+  if (n10 === 1 && n100 !== 11) return one;
+  if (n10 >= 2 && n10 <= 4 && (n100 < 10 || n100 >= 20)) return few;
+  return many;
+};
+
+// «N заявок · сумма» за выбранный период — до скачивания, чтобы было видно,
+// что период выбран правильно и файл не придёт пустым.
+export function exportPreview(id) {
+  const out  = document.getElementById("sum-" + id);
+  const from = document.querySelector(`input[data-from="${id}"]`);
+  const to   = document.querySelector(`input[data-to="${id}"]`);
+  if (!out || !from || !to) return;
+  if (!from.value || !to.value || from.value > to.value) { out.textContent = "укажите период"; return; }
+  const rows = exportRows(id, from.value, to.value);
+  const sum = rows.reduce((s, it) => s + (Number(it.amount) || 0), 0);
+  out.textContent = rows.length
+    ? `${rows.length} ${plural(rows.length, "заявка", "заявки", "заявок")} · ${fmtMoney(sum)}`
+    : "за период заявок нет";
+}
+
 export function renderClients() {
   const sel = document.getElementById("ncStaff");
   sel.innerHTML = '<option value="">— бухгалтер —</option>' + state.staffList.map(s =>
@@ -48,56 +81,71 @@ export function renderClients() {
 
   const box = document.getElementById("clientsList");
   if (!state.clientsList.length) {
-    box.innerHTML = '<div class="empty">Пока нет клиентов. Добавьте первого выше.</div>';
+    box.innerHTML = '<div class="k-empty">Пока нет клиентов. Добавьте первого выше.</div>';
     return;
   }
   const isAdmin = !!(state.currentStaff && state.currentStaff.is_admin);
   const per = monthRange();
+  const bound = state.clientsList.filter(c => c.telegram_id).length;
 
-  box.innerHTML = state.clientsList.map(c => {
+  const rows = state.clientsList.map(c => {
     const link = baseLink(c.token);
     const cnt = state.items.filter(it => it.client_id === c.id).length;
-    // админу видно, у кого заявок нет, — такого клиента можно удалить
-    const delBtn = isAdmin
-      ? `<button class="cl-del" data-del="${esc(c.id)}"` +
-        (cnt ? ` title="У клиента ${cnt} — удалить нельзя"` : ` title="Удалить клиента"`) +
-        `>🗑 Удалить</button>`
-      : "";
+    const id = esc(c.id);
+    // Без бота клиент не узнает ни о вопросе, ни об оплате — это первое, что
+    // бухгалтеру стоит увидеть в списке.
+    const bot = c.telegram_id
+      ? `<span class="k-bot ok">${SVG_OK}привязан к боту</span>`
+      : `<span class="k-bot no">${SVG_WARN}не привязан к боту — уведомления не приходят</span>`;
 
+    const acts = [
+      `<button class="k-act" data-copy="${esc(link)}">Копировать</button>`,
+      `<button class="k-act" data-rotate="${id}" title="Перевыпустить ссылку — старая перестанет работать">Перевыпустить</button>`,
+      `<button class="k-act green" data-export="${id}">Excel</button>`,
+    ];
     // Переименовать и сменить бухгалтера — только админ (M9.1, M9.2). Проверка
     // прав в update_client; кнопку бухгалтеру не показываем, чтобы не обещать.
-    const editBtn = isAdmin
-      ? `<button data-cledit="${esc(c.id)}" title="Название и бухгалтер">✏️ Изменить</button>`
-      : "";
+    if (isAdmin) acts.push(`<button class="k-act" data-cledit="${id}" title="Название и бухгалтер">Изменить</button>`);
+    // Удалить можно только клиента без заявок — проверяет delete_client в базе;
+    // кнопку у клиента с заявками не показываем вовсе.
+    if (isAdmin && !cnt) acts.push(`<button class="k-act red" data-del="${id}">Удалить</button>`);
+
     const editBox = isAdmin
-      ? `<div class="cl-period" id="ed-${esc(c.id)}" hidden>` +
-          `<input data-edname="${esc(c.id)}" value="${esc(c.name)}" maxlength="200" placeholder="Название компании">` +
-          `<select data-edstaff="${esc(c.id)}">` + state.staffList.map(s =>
+      ? `<div class="k-sub" id="ed-${id}" hidden>` +
+          `<span>Название и бухгалтер</span>` +
+          `<input data-edname="${id}" value="${esc(c.name)}" maxlength="200" placeholder="Название компании" aria-label="Название компании">` +
+          `<select data-edstaff="${id}" aria-label="Бухгалтер">` + state.staffList.map(s =>
             `<option value="${esc(s.id)}"${s.id === c.staff_id ? " selected" : ""}>${esc(s.name)}${s.is_admin ? " (админ)" : ""}</option>`
           ).join("") + `</select>` +
-          `<button data-edsave="${esc(c.id)}">Сохранить</button>` +
+          `<button data-edsave="${id}">Сохранить</button>` +
         `</div>`
       : "";
 
-    return `<div class="cl-card">` +
-      `<div class="nm">${esc(c.name)}</div>` +
-      `<div class="who">Бухгалтер: ${esc(staffNameById(c.staff_id))} · заявок: ${cnt}</div>` +
-      `<div class="cl-link"><code>${esc(link)}</code>` +
-      `<button data-copy="${esc(link)}">Скопировать ссылку</button>` +
-      `<button class="ghost" data-rotate="${esc(c.id)}" title="Перевыпустить ссылку — старая перестанет работать">🔄 Перевыпустить</button></div>` +
-      `<div class="cl-tools">` +
-        `<button class="cl-exp" data-export="${esc(c.id)}">📊 Выгрузить в Excel</button>` +
-        editBtn +
-        delBtn +
+    return `<div class="k-row">` +
+        `<div class="k-c-name"><div class="k-nm">${esc(c.name)}</div>${bot}</div>` +
+        `<div class="k-c-staff"><span class="k-lbl">Бухгалтер</span>${esc(staffNameById(c.staff_id))}</div>` +
+        `<div class="k-c-link"><code title="${esc(link)}">${esc(shortLink(c.token))}</code></div>` +
+        `<div class="k-c-cnt num${cnt ? "" : " zero"}"><span class="k-lbl">Заявок</span>${cnt}</div>` +
+        `<div class="k-c-acts">${acts.join("")}</div>` +
       `</div>` +
       editBox +
-      `<div class="cl-period" id="per-${esc(c.id)}" hidden>` +
-        `<span>с</span><input type="date" data-from="${esc(c.id)}" value="${per.from}">` +
-        `<span>по</span><input type="date" data-to="${esc(c.id)}" value="${per.to}">` +
-        `<button data-expgo="${esc(c.id)}">Скачать</button>` +
-      `</div>` +
+      `<div class="k-sub" id="per-${id}" hidden>` +
+        `<span>Выгрузить платежи «${esc(c.name)}» за период</span>` +
+        `<input type="date" data-from="${id}" value="${per.from}" aria-label="С">` +
+        `<span>—</span>` +
+        `<input type="date" data-to="${id}" value="${per.to}" aria-label="По">` +
+        `<button data-expgo="${id}">Скачать</button>` +
+        `<span class="k-sum" id="sum-${id}"></span>` +
       `</div>`;
   }).join("");
+
+  const n = state.clientsList.length;
+  box.innerHTML = `<div class="k-sheet">` +
+    `<div class="k-hrow" aria-hidden="true"><div>Клиент</div><div>Бухгалтер</div><div>Персональная ссылка</div><div class="r">Заявок</div><div class="r">Действия</div></div>` +
+    rows +
+    `<div class="k-foot"><span>${n} ${plural(n, "клиент", "клиента", "клиентов")} · ${bound} ${plural(bound, "привязан", "привязаны", "привязаны")} к боту</span>` +
+    (isAdmin ? `<span>Удалить можно только клиента без заявок</span>` : "") + `</div>` +
+  `</div>`;
 }
 
 // Удаление клиента — только админ и только если заявок нет.

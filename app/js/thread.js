@@ -79,19 +79,35 @@ export function openThread(it, onChange) {
   const box = document.getElementById("thBox");
   const st = threadState(it);
 
-  document.getElementById("thPayee").textContent = it.payee || "—";
-  document.getElementById("thAmount").textContent = fmtMoney(it.amount);
-  document.getElementById("thMeta").textContent =
-    `${it.client || "личная задача"} · срок ${fmtDate(it.due)}` + (it.purpose ? ` · ${it.purpose}` : "");
+  const closed = it.status === "sent";
+  const has = (it.thread || []).length > 0;
+  document.getElementById("thTitle").textContent = has ? "Переписка с клиентом" : "Спросить у клиента";
+  document.getElementById("thSub").textContent = closed
+    ? "История вопросов по этой заявке."
+    : "Вопрос придёт клиенту в бот и появится в его кабинете. Заявка будет помечена «ждём ответа».";
 
-  document.getElementById("thList").innerHTML = threadHtml(it);
+  // Сумма — как в очереди: при частичной оплате важен остаток, а полная сумма
+  // заявки уходит в подпись. Иначе бухгалтер спрашивал бы про 640, когда
+  // платить осталось 400.
+  const paid = Number(it.paidAmount) || 0;
+  const rest = Math.max(Math.round((Number(it.amount) - paid) * 100) / 100, 0);
+  const partial = paid > 0 && rest > 0 && !closed && it.status !== "paid";
+  document.getElementById("thPayee").textContent = it.payee || "—";
+  document.getElementById("thAmount").textContent = fmtMoney(partial ? rest : it.amount);
+  document.getElementById("thMeta").textContent =
+    `${it.client || "личная задача"} · срок ${fmtDate(it.due)}` +
+    (partial ? ` · остаток, оплачено ${fmtMoney(paid)} из ${fmtMoney(it.amount)}` : "") +
+    (it.purpose ? ` · ${it.purpose}` : "");
+
+  const listEl = document.getElementById("thList");
+  listEl.innerHTML = threadHtml(it);
+  listEl.classList.toggle("hidden", !has);
   document.getElementById("thChips").innerHTML = QUESTION_TEMPLATES
     .map((t, i) => `<button type="button" class="th-chip" data-tpl="${i}">${esc(t)}</button>`).join("");
   document.getElementById("thText").value = "";
 
   // По закрытой заявке писать нельзя (M7.2): клиент ответить уже не сможет,
   // сервер такой вопрос отвергнет. Историю показываем, поле ввода — нет.
-  const closed = it.status === "sent";
   document.getElementById("thClosed").classList.toggle("hidden", !closed);
   document.getElementById("thCompose").classList.toggle("hidden", closed);
   document.getElementById("thSend").classList.toggle("hidden", closed);
@@ -131,6 +147,8 @@ async function post(text, kind) {
   try {
     await postStaffMessage(it, text, kind);
     document.getElementById("thList").innerHTML = threadHtml(it);
+    document.getElementById("thList").classList.remove("hidden");
+    document.getElementById("thTitle").textContent = "Переписка с клиентом";
     document.getElementById("thText").value = "";
     document.getElementById("thRemind").classList.remove("hidden");
     const list = document.getElementById("thList");

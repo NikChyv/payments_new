@@ -134,9 +134,52 @@ try {
   const toast = await ev(`document.getElementById('toast')?.textContent || ""`);
   ok(/тем временем/.test(toast), `бухгалтеру сказали, что произошло: «${toast}»`);
 
-  // -----------------------------------------------------------------------
   await setStatus(id, before.status);                // прибираем за собой
   console.log(`\nЗаявка возвращена в «${before.status}».`);
+
+  // -----------------------------------------------------------------------
+  // 3. Правка формой не стирает файл, приложенный клиентом (M7.1)
+  // -----------------------------------------------------------------------
+  // Форма пишет набор файлов целиком. Пока бухгалтер её правил, клиент
+  // ответил на вопрос со счётом — раньше правка молча выкидывала этот счёт.
+  console.log("\nПравка формой, пока клиент прикладывает файл (M7.1):");
+  const FID = "race-files";
+  const fileA = { url: `${API}/storage/v1/object/public/files/race-a.pdf`, name: "race-a.pdf" };
+  const fileB = { url: `${API}/storage/v1/object/public/files/race-b.pdf`, name: "race-b.pdf" };
+  await fetch(`${API}/rest/v1/payments?id=eq.${FID}`, { method: "DELETE", headers: H });
+  const ins = await fetch(`${API}/rest/v1/payments`, { method: "POST", headers: H, body: JSON.stringify({
+    id: FID, client_id: before.client_id, client: before.client, payee: "Гонка файлов", amount: 10,
+    due: before.due, recurrence: "once", status: "new", files: [fileA], file_url: fileA.url, file_name: fileA.name }) });
+  if (!ins.ok) throw new Error("не завёл заявку для M7.1: " + await ins.text());
+  try {
+    await go(base, 3200);
+    await ev(`document.querySelector('#qFilters button[data-f=""]')?.click()`); await sleep(500);
+    await ev(`document.querySelector('.qr[data-id="${FID}"] button[data-menu]')?.click()`); await sleep(400);
+    await ev(`document.querySelector('#qMenu button[data-edit]')?.click()`); await sleep(500);
+    ok(await ev(`!document.getElementById('view-form').classList.contains('hidden') && document.getElementById('payForm').payee.value === 'Гонка файлов'`),
+       "форма правки открыта");
+
+    // «клиент» отвечает с файлом — так же, как reply_by_token: файл ложится в заявку
+    await fetch(`${API}/rest/v1/payments?id=eq.${FID}`, { method: "PATCH", headers: H,
+      body: JSON.stringify({ files: [fileA, fileB] }) });
+
+    await ev(`(() => { const f = document.getElementById('payForm'); f.payee.value = 'Гонка файлов — правка'; f.querySelector('.submit').click(); })()`);
+    await sleep(2000);
+    let row = await getRow(FID);
+    ok(row.payee === "Гонка файлов" && row.files.length === 2,
+       `правка не записалась поверх: в базе «${row.payee}», файлов ${row.files.length}`);
+    const t1 = await ev(`document.getElementById('toast')?.textContent || ""`);
+    ok(/race-b\.pdf/.test(t1), `бухгалтеру сказали про новый файл: «${t1}»`);
+    ok(await ev(`!document.getElementById('view-form').classList.contains('hidden') && document.getElementById('payForm').payee.value === 'Гонка файлов — правка' && document.getElementById('fileList').textContent.includes('race-b.pdf')`),
+       "форма осталась открытой, набранное цело, новый файл в ней");
+
+    await ev(`document.querySelector('#payForm .submit').click()`); await sleep(2000);
+    row = await getRow(FID);
+    ok(row.payee === "Гонка файлов — правка" && row.files.map(f => f.name).join() === "race-a.pdf,race-b.pdf",
+       `повторное сохранение прошло, файл клиента цел: «${row.payee}», ${row.files.map(f => f.name).join(", ")}`);
+  } finally {
+    await fetch(`${API}/rest/v1/payments?id=eq.${FID}`, { method: "DELETE", headers: H });
+  }
 
   const noise = [...new Set(problems)];
   if (noise.length) { console.log("\nОшибки в консоли:"); noise.forEach((p) => console.log("  " + p)); }
