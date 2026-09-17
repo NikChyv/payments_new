@@ -69,6 +69,11 @@ body.client-mode{font-family:Manrope,"Segoe UI",system-ui,-apple-system,Roboto,A
 /* Кнопки и поля по умолчанию берут шрифт браузера (Arial на Windows), а не
    страницы: без этого половина интерфейса осталась бы в старом шрифте. */
 button,input,select,textarea{font-family:inherit}
+/* Иконки Lucide (js/icons.js, шаг 8): перед подписью, цвет — от текста. Отступ
+   справа свой; где зазор уже задан gap у flex-родителя — класс bare или
+   правило ниже, иначе отступ удвоится. */
+.ico{display:inline-block;flex:none;vertical-align:-.16em;margin-right:.4em}
+.ico.bare,.q-menu .ico{margin-right:0}
 /* Шапка — фирменный синий, как в пробниках B и C. Кабинет клиента
    перестраивает её под себя — блок «Кабинет клиента» ниже. */
 header{background:var(--accent);position:sticky;top:0;z-index:20}

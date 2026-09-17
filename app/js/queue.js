@@ -1,3 +1,4 @@
+import { ico } from './icons.js';
 import { state } from './state.js';
 import { daysBetween, addDays, addMonths, fmtDate, fmtDateShort, fmtNum, fmtMoney, todayStr, isoLocal } from './dates.js';
 import { removeRemote, uploadFiles, changeStatusRemote, attachDocRemote, attachPartDocRemote,
@@ -180,8 +181,8 @@ export function render() {
 
 // ---------- значки и вложения ----------
 
-const CLIP = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21.4 11.05 12.25 20.2a5.5 5.5 0 0 1-7.78-7.78l9.19-9.19a3.67 3.67 0 0 1 5.18 5.19l-9.2 9.19a1.83 1.83 0 0 1-2.59-2.6l8.49-8.48"/></svg>';
-const DOC  = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>';
+const CLIP = ico("paperclip", 13, "bare");
+const DOC  = ico("file", 13, "bare");
 const DOTS = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>';
 const REC  = t => `<svg class="rec" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" role="img" aria-label="${t}"><title>${t}</title><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>`;
 
@@ -212,7 +213,7 @@ function seenAttrs(it) {
 // (кроме закрытых — там ответить уже нельзя, M7.2).
 function primaryOf(it, ts) {
   if (it.status === "sent") return null;
-  if (ts === "waiting")            return {a:"remind", t:"🔔 Напомнить", c:"hold"};
+  if (ts === "waiting")            return {a:"remind", t:ico("bell") + "Напомнить", c:"hold"};
   if (it.status === "new")         return {a:"take",   t:"В работу",    c:""};
   // с частичной оплатой подпись честнее: платят остаток, а не всю сумму
   if (it.status === "in_progress") return {a:"pay",    t:partly(it) ? "Остаток оплачен" : "Оплачено", c:"done"};
@@ -220,7 +221,7 @@ function primaryOf(it, ts) {
     // коротко: колонка действия мерена по «Остаток оплачен» (208 px, зазор
     // 38 px до суммы на 961), «Приложить документ» вылезал на сумму на 19 px.
     // Полная подпись — в подсказке, в меню и в раскрытии.
-    ? {a:"attach", t:"📄 Документ", c:"", title:"Приложить платёжный документ — клиент получит его в Telegram"}
+    ? {a:"attach", t:ico("file") + "Документ", c:"", title:"Приложить платёжный документ — клиент получит его в Telegram"}
     : {a:"send",   t:"Закрыть",            c:""};
   return null;
 }
@@ -229,7 +230,7 @@ function primaryOf(it, ts) {
 // действие из этого списка в меню не дублируется.
 function statusActions(it, ts) {
   const a = [], st = it.status, p = partly(it);
-  if (ts === "waiting" && st !== "sent") a.push(["remind", "🔔 Напомнить"]);
+  if (ts === "waiting" && st !== "sent") a.push(["remind", ico("bell") + "Напомнить"]);
   if (st === "new") a.push(["take", "Взять в работу"]);
   if (activeOpen(it)) {
     a.push(["pay", p ? "Остаток оплачен" : "Отметить оплаченной"]);
@@ -241,7 +242,7 @@ function statusActions(it, ts) {
   // «Вернуть в новые» с оплаченными частями — бессмыслица: деньги уже ушли
   if (st === "in_progress" && !hasParts(it)) a.push(["back", "Вернуть в «новые»"]);
   if (st === "paid") {
-    if (it.needReceipt) a.push(["attach", "📄 Приложить документ"]);
+    if (it.needReceipt) a.push(["attach", ico("file") + "Приложить документ"]);
     a.push(["send", it.needReceipt ? "Закрыть без файла" : "Закрыть"]);
     a.push(["unpay", "Отменить оплату", "bad"]);
   }
@@ -251,8 +252,8 @@ function statusActions(it, ts) {
 
 function threadAction(it, ts) {
   const n = (it.thread || []).length;
-  if (it.status === "sent") return n ? ["thread", `💬 Переписка (${n})`] : null;
-  return ["thread", ts === "none" ? "❓ Спросить клиента…" : `💬 Переписка (${n})`];
+  if (it.status === "sent") return n ? ["thread", ico("message") + `Переписка (${n})`] : null;
+  return ["thread", ts === "none" ? ico("help") + "Спросить клиента…" : ico("message") + `Переписка (${n})`];
 }
 
 function rowHtml(it) {
@@ -267,8 +268,8 @@ function rowHtml(it) {
   // Статуса колонкой нет: в девяти строках из десяти там было бы «принята».
   // Метка у получателя — только когда статус не «принята».
   let tags = "";
-  if (ts === "waiting")       tags += tag("hold", "⏸ ждём ответ");
-  else if (ts === "answered") tags += tag("reply", "💬 клиент ответил");
+  if (ts === "waiting")       tags += tag("hold", ico("clock", 11) + "ждём ответ");
+  else if (ts === "answered") tags += tag("reply", ico("message", 11) + "клиент ответил");
   if (it.status === "in_progress" || (it.status === "new" && paidOf(it) > 0))
     tags += partly(it) ? tag("part", "частично") : tag("", "в работе");
   else if (it.status === "paid")
@@ -315,7 +316,7 @@ function partsHtml(it, seen) {
     return `<div class="q-part"><b class="num">${fmtNum(pt.amount)}</b>` +
       `<span>${pt.at ? fmtDateShort(isoLocal(new Date(pt.at))) : ""} · ${esc(pt.by_name || "сотрудник")}</span>` +
       (docs.length ? `<span class="q-files">${fileLinks(docs, true)}</span>` : "") +
-      (canDoc ? `<button class="q-link" data-act="partdoc" data-part-doc="${esc(pt.id)}"${seen}>📄 документ на часть</button>` : "") +
+      (canDoc ? `<button class="q-link" data-act="partdoc" data-part-doc="${esc(pt.id)}"${seen}>${ico("file", 12)}документ на часть</button>` : "") +
     `</div>`;
   }).join("");
   const tail = rest > 0

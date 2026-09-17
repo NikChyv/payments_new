@@ -11,6 +11,7 @@ import {
   resetClientFilter, openClientReply, initClientReply,
 } from './client_view.js';
 import { initThreadDialog } from './thread.js';
+import { ico } from './icons.js';
 
 // ---------- навигация ----------
 
@@ -93,10 +94,10 @@ function renderFormFiles() {
 
   box.innerHTML =
     kept.map((f, i) =>
-      `<span class="file-chip">📎 ${esc(f.name || "файл")}` +
-      `<button type="button" class="x" data-rmfile="${i}" title="Убрать файл">✕</button></span>`
+      `<span class="file-chip">${ico("paperclip", 13, "bare")}${esc(f.name || "файл")}` +
+      `<button type="button" class="x" data-rmfile="${i}" title="Убрать файл" aria-label="Убрать файл">${ico("x", 13, "bare")}</button></span>`
     ).join("") +
-    picked.map(f => `<span class="file-chip new">⬆ ${esc(f.name)}</span>`).join("");
+    picked.map(f => `<span class="file-chip new">${ico("upload", 13, "bare")}${esc(f.name)}</span>`).join("");
 }
 
 function fillFormFields(it) {

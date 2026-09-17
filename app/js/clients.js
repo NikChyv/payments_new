@@ -3,9 +3,10 @@ import { state } from './state.js';
 import { esc, toast } from './utils.js';
 import { monthRange, exportRows } from './export.js';
 import { fmtMoney } from './dates.js';
+import { ico } from './icons.js';
 
-const SVG_OK   = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
-const SVG_WARN = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 8v5"/><path d="M12 16.5v.5"/><circle cx="12" cy="12" r="9"/></svg>';
+const SVG_OK   = ico("check", 12, "bare", 2.2);
+const SVG_WARN = ico("circleAlert", 12, "bare", 2.2);
 
 export function baseLink(token) {
   return location.origin + location.pathname + "?t=" + encodeURIComponent(token);

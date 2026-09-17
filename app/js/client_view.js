@@ -4,6 +4,7 @@ import { esc, safeUrl, toast } from './utils.js';
 import { fmtDate, fmtMoney, todayStr, isoLocal } from './dates.js';
 import { activeOpen } from './queue.js';
 import { threadState } from './thread.js';
+import { ico } from './icons.js';
 
 // ---------- Supabase RPC (Шаг 7) ----------
 
@@ -83,9 +84,9 @@ const recWord = {weekly:"еженедельно", monthly:"ежемесячно"
 const cents   = v => Math.round(Number(v) * 100) / 100;
 const paidOf  = it => Number(it.paidAmount) || 0;
 
-const SVG_CHECK = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
-const SVG_CLIP  = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.4 11.05-9.15 9.15a5.5 5.5 0 0 1-7.78-7.78l9.19-9.19a3.67 3.67 0 0 1 5.18 5.19l-9.2 9.19a1.83 1.83 0 0 1-2.59-2.59l8.49-8.48"/></svg>';
-const SVG_DOC   = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>';
+const SVG_CHECK = ico("check", 12, "bare", 3.2);
+const SVG_CLIP  = ico("paperclip", 12, "bare");
+const SVG_DOC   = ico("file", 12, "bare");
 
 // Вопрос бухгалтера ждёт ответа. По закрытой (sent) заявке ответить уже
 // нельзя — сервер не примет, значит и звать к ответу нечего.
@@ -191,7 +192,7 @@ function threadHtml(it) {
   }).join("");
 
   return `<div class="c-thread${asking ? " ask" : ""}">` +
-    `<div class="c-thread-h">${asking ? "❓ Бухгалтер спрашивает" : "Переписка с бухгалтером"}</div>` +
+    `<div class="c-thread-h">${asking ? ico("help", 13) + "Бухгалтер спрашивает" : "Переписка с бухгалтером"}</div>` +
     msgs +
     (asking ? `<button class="c-b pri" data-clreply="${esc(it.id)}">Ответить бухгалтеру</button>` : "") +
   `</div>`;
@@ -228,7 +229,7 @@ function rowHtmlClient(it) {
     `<div class="c-r1">` +
       `<div class="c-who-col"><div class="c-nm">${esc(it.payee)}</div>` +
         `<div class="c-meta"><span>${when}</span>` +
-          (recWord[it.recurrence] ? `<span>↻ ${recWord[it.recurrence]}</span>` : "") +
+          (recWord[it.recurrence] ? `<span>${ico("repeat", 12, "", 2.2)}${recWord[it.recurrence]}</span>` : "") +
           (it.requisites ? `<span>${esc(it.requisites)}</span>` : "") +
         `</div></div>` +
       `<div class="c-right"><span class="c-pill ${pc}">${pt}</span>` +
@@ -349,7 +350,7 @@ function syncClientTools(all) {
 
   const sort = document.getElementById("clSort");
   if (sort) {
-    sort.textContent = state.clSort === "asc" ? "↑ Сначала старые" : "↓ Сначала новые";
+    sort.innerHTML = state.clSort === "asc" ? ico("arrowUp", 13) + "Сначала старые" : ico("arrowDown", 13) + "Сначала новые";
     sort.title = "Порядок по дате платежа — нажмите, чтобы поменять";
   }
 

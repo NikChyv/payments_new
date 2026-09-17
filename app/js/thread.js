@@ -2,6 +2,7 @@ import { state } from './state.js';
 import { postStaffMessage } from './supabase.js';
 import { esc, safeUrl, toast } from './utils.js';
 import { fmtDate, fmtMoney } from './dates.js';
+import { ico } from './icons.js';
 
 // Переписка по заявке: бухгалтер спрашивает недостающее, клиент отвечает из
 // бота или из кабинета. Всё в одном окне — вопрос, история и напоминание:
@@ -54,7 +55,7 @@ export function threadHtml(it) {
   return list.map(m => {
     const files = (m.files || [])
       .filter(f => f && f.url)
-      .map(f => `<a class="th-file" href="${esc(safeUrl(f.url))}" target="_blank" rel="noopener">📎 ${esc(f.name || "файл")}</a>`)
+      .map(f => `<a class="th-file" href="${esc(safeUrl(f.url))}" target="_blank" rel="noopener">${ico("paperclip", 12, "bare")}${esc(f.name || "файл")}</a>`)
       .join("");
     const who = m.who === "client" ? esc(m.author || it.client) : esc(m.author || "Бухгалтер");
     const kind = m.kind === "reminder" ? " · напоминание" : "";
@@ -123,7 +124,7 @@ export function openThread(it, onChange) {
     warn.textContent = "";
   } else {
     warn.className = "th-warn";
-    warn.innerHTML = `⚠️ <b>${esc(it.client)}</b> не подключён к боту — в Telegram сообщение не придёт. ` +
+    warn.innerHTML = `${ico("alert", 13)}<b>${esc(it.client)}</b> не подключён к боту — в Telegram сообщение не придёт. ` +
       `Клиент увидит его, когда откроет свою ссылку.`;
   }
 
