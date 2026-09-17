@@ -109,6 +109,10 @@ function fileChips(list, doc) {
 function pillOf(it) {
   if (activeOpen(it) && askOpen(it)) return ["ask", "Нужен ваш ответ"];
   if (it.status === "in_progress")    return ["prog", paidOf(it) > 0 ? "Оплачено частично" : "В работе"];
+  // Закрыта с недоплатой: «Оплачено» над суммой 300 читается как «ушло 300»,
+  // а ушло 250 — сколько именно, написано ниже, в блоке частей.
+  if (!activeOpen(it) && paidOf(it) > 0 && cents(Number(it.amount) - paidOf(it)) > 0)
+                                      return ["new", "Закрыта · оплачено частично"];
   if (it.status === "paid")           return ["ok", "Оплачено"];
   if (it.status === "sent")           return ["ok", it.needReceipt ? "Документ отправлен" : "Оплачено"];
   return ["new", "Принята"];
@@ -129,7 +133,9 @@ function stepsHtml(it) {
   }).join("");
 
   let words;
-  if (fullyDone) words = it.status === "sent" && it.needReceipt ? "Готово · документ отправлен" : "Готово · оплачено";
+  const under = paidOf(it) > 0 && cents(Number(it.amount) - paidOf(it)) > 0;
+  if (fullyDone) words = it.status === "sent" && it.needReceipt ? "Готово · документ отправлен"
+    : under ? "Готово · заявка закрыта, оплачено частично" : "Готово · оплачено";
   else {
     const what = askOpen(it) && activeOpen(it) ? "бухгалтер ждёт вашего ответа"
       : it.status === "new" ? "заявка принята, ждёт оплаты"
@@ -260,6 +266,7 @@ export function openClientReply(it) {
   document.getElementById("clrText").value = "";
   const f = document.getElementById("clrFile");
   if (f) f.value = "";
+  renderReplyFiles();
   document.getElementById("clrBox").classList.remove("hidden");
   setTimeout(() => document.getElementById("clrText").focus(), 30);
 }
@@ -300,9 +307,21 @@ async function sendClientReply() {
   }
 }
 
+// Поле выбора спрятано под зону «Выберите файлы» — выбранное показываем сами,
+// иначе человек не видит, приложилось ли.
+function renderReplyFiles() {
+  const input = document.getElementById("clrFile");
+  const out = document.getElementById("clrFileList");
+  if (!input || !out) return;
+  out.innerHTML = Array.from(input.files || [])
+    .map(x => `<span class="file-chip new">${ico("upload", 13, "bare")}${esc(x.name)}</span>`).join("");
+}
+
 export function initClientReply() {
   const box = document.getElementById("clrBox");
   if (!box) return;
+  const input = document.getElementById("clrFile");
+  if (input) input.addEventListener("change", renderReplyFiles);
   box.addEventListener("click", e => {
     if (e.target === box) { closeClientReply(); return; }
     const b = e.target.closest && e.target.closest("button[data-clr]");
@@ -351,7 +370,7 @@ function syncClientTools(all) {
   const sort = document.getElementById("clSort");
   if (sort) {
     sort.innerHTML = state.clSort === "asc" ? ico("arrowUp", 13) + "Сначала старые" : ico("arrowDown", 13) + "Сначала новые";
-    sort.title = "Порядок по дате платежа — нажмите, чтобы поменять";
+    sort.title = "Порядок оплаченных по дате платежа. Запланированные всегда по сроку: ближайшие сверху";
   }
 
   box.querySelectorAll("button[data-clf]").forEach(btn => {
@@ -390,11 +409,17 @@ export function renderClient() {
   // листать в самый низ. Запланированные при этом всегда выше оплаченных —
   // иначе просроченный неоплаченный платёж со старой датой утонул бы среди
   // давно закрытых.
+  //
+  // Запланированные — всегда по сроку, ближайшие сверху, переключатель на них
+  // не действует: при «сначала новые» сегодняшняя заявка с вопросом бухгалтера
+  // уезжала под платёж через неделю, а клиенту первым нужно то, что горит.
+  // Переключатель и появился ради оплаченных — к ним и применяется.
   const dir = state.clSort === "asc" ? 1 : -1;
   rows.sort((a, b) => {
     const ao = activeOpen(a) ? 0 : 1, bo = activeOpen(b) ? 0 : 1;
     if (ao !== bo) return ao - bo;
-    return a.due < b.due ? -dir : a.due > b.due ? dir : 0;
+    const d = ao === 0 ? 1 : dir;
+    return a.due < b.due ? -d : a.due > b.due ? d : 0;
   });
 
   // Тихая подсказка: видно, что часть платежей скрыта фильтром, а не пропала.

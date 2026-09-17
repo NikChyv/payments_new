@@ -139,7 +139,7 @@
 
       <!-- для сотрудника: выбрать клиента или завести личную напоминалку -->
       <div class="fg" id="staffClientBox" style="display:none">
-        <label>Для кого платёж</label>
+        <label for="ncFormClient">Для кого платёж <span class="req">*</span></label>
         <select id="ncFormClient"></select>
         <div class="hint">Личная задача видна только вам — клиент её не увидит.</div>
       </div>
@@ -346,8 +346,13 @@
 
     <div class="fg clr-files">
       <label for="clrFile">Приложить счёт или документ <span class="opt">— необязательно</span></label>
-      <input type="file" id="clrFile" accept="image/*,.pdf,.xlsx,.docx,.xls,.doc" multiple>
-      <div class="hint">Файл попадёт прямо в заявку — бухгалтеру не придётся искать его в переписке.</div>
+      <input type="file" id="clrFile" class="vh" accept="image/*,.pdf,.xlsx,.docx,.xls,.doc" multiple>
+      <label class="drop" for="clrFile">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+        <b>Выберите файлы</b>
+        <span>Файл попадёт прямо в заявку — бухгалтеру не придётся искать его в переписке</span>
+      </label>
+      <div class="file-list" id="clrFileList"></div>
     </div>
 
     <div class="ovl-btns">

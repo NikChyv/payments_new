@@ -41,6 +41,7 @@
   --accent-bg:#E8EFF8; --accent-tint:#F5F9FD; --accent-line:#C9D5E5; --accent-ink:#22385A;
   --red-line:#EDC6C2; --red-line-banner:#EDC6C2; --red-row:#FBEFEC; --red-row-line:#E6B3AD;
   --orange-row:#FCF6E7; --orange-row-line:#E6CB94;
+  --red-row-hover:#F7E2DE; --orange-row-hover:#F8ECD0;
   --amber-line:#EFD8A8; --amber-ink:#7A5410;
   --green-line:#C6E3D3; --green-line-msg:#C6E3D3;
   --blue-line:#CBE4EC; --purple:#2F4A73; --purple-bg:#E8EFF8;
@@ -546,7 +547,7 @@ body.client-mode .submit{height:52px;padding:0;border-radius:12px;font-size:16px
 .q-f.on i{background:var(--teal-lt)}
 .q-f.crit i{background:var(--red)} .q-f.warn i{background:var(--orange)} .q-f.hold i{background:var(--gray)}
 .q-f.crit.on i{background:var(--crit-on)} .q-f.warn.on i{background:var(--warn-on)} .q-f.hold.on i{background:var(--line-strong)}
-.q-f .n{font-size:12px;color:var(--faint);font-weight:700}
+.q-f .n{font-size:12px;color:var(--muted);font-weight:700}
 .q-f.on .n{color:var(--on-accent-dim)}
 
 /* поиск и фильтры */
@@ -582,7 +583,9 @@ body.client-mode .q-sheet{background:none;border:0;border-radius:0;box-shadow:no
    ловилось взглядом до того, как прочитаешь дату. Без полос и рамок. */
 .qr.u-crit{background:var(--red-row)}
 .qr.u-warn{background:var(--orange-row)}
-.qr.u-crit:hover,.qr.u-warn:hover{background:var(--accent-bg)}
+/* под курсором срочная строка темнеет в свой цвет, а не голубеет: сигнал не пропадает */
+.qr.u-crit:hover{background:var(--red-row-hover)}
+.qr.u-warn:hover{background:var(--orange-row-hover)}
 .qr.open,.qr.u-crit.open,.qr.u-warn.open{background:var(--sunk)}
 .qr:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .qr > div{padding:11px 14px}
@@ -627,6 +630,8 @@ body.client-mode .q-sheet{background:none;border:0;border-radius:0;box-shadow:no
 .q-go.done:hover{background:var(--green-d);border-color:var(--green-d)}
 .q-go.hold{background:var(--gray);border-color:var(--gray)}
 .q-go.hold:hover{background:var(--gray-d);border-color:var(--gray-d)}
+.q-go.line{background:var(--card);color:var(--accent)}
+.q-go.line:hover{background:var(--accent-bg);border-color:var(--accent-d);color:var(--accent-d)}
 .q-more{width:31px;height:31px;flex:none;display:flex;align-items:center;justify-content:center;
   border:0;border-radius:8px;background:none;color:var(--faint);cursor:pointer}
 .q-more:hover{background:var(--accent-bg);color:var(--accent)}

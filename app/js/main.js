@@ -3,7 +3,7 @@ import { state } from './state.js';
 import { todayStr, fmtDate, workingDueFor, fmtDateDow } from './dates.js';
 import { esc, toast, genId } from './utils.js';
 import { onLoggedIn, doLogin, doLogout } from './auth.js';
-import { addClient, refreshClients, rotateClientToken, deleteClientById, renderClients, saveClientEdit, exportPreview } from './clients.js';
+import { PERSONAL, addClient, refreshClients, rotateClientToken, deleteClientById, renderClients, saveClientEdit, exportPreview } from './clients.js';
 import { exportClientPayments } from './export.js';
 import { render, onListClick, initQueue } from './queue.js';
 import {
@@ -122,6 +122,10 @@ function fillFormForEdit(it) {
   // набор файлов в базе на момент открытия — условие записи правки (M7.1);
   // у только что заведённой в этой вкладке заявки filesRaw ещё нет
   state.editingFiles = (it.filesRaw || it.files || []).slice();
+  // клиента заявки форма не меняет (его меняет только админ, M9) — показываем,
+  // чей платёж, но выбрать другого не даём
+  const sel = document.getElementById("ncFormClient");
+  if (sel && !state.TOKEN) { sel.value = it.client_id || PERSONAL; sel.disabled = true; }
   setFormMode("edit");
   updateDueHint();
   switchView("form");
@@ -158,7 +162,7 @@ function fillFormForDuplicate(it) {
   renderFormFiles();
   // сотруднику подставляем того же клиента, иначе дубликат уедет в личные задачи
   const sel = document.getElementById("ncFormClient");
-  if (sel && !state.TOKEN) sel.value = it.client_id || "";
+  if (sel && !state.TOKEN) { sel.disabled = false; sel.value = it.client_id || PERSONAL; }
   setFormMode("dup");
   switchView("form");
   // клиенту то же самое сказано подзаголовком формы
@@ -170,6 +174,9 @@ function fillFormForDuplicate(it) {
 function resetFormNew() {
   const f = document.getElementById("payForm");
   f.reset();
+  // после правки выбор клиента был заблокирован — новая заявка снова выбирает
+  const who = document.getElementById("ncFormClient");
+  if (who) who.disabled = false;
   state.editingId = null;
   state.editingDue = null;
   state.formFiles = [];
@@ -220,6 +227,13 @@ function weekendDueBlocked(dueStr) {
 async function onSubmit(e) {
   e.preventDefault();
   const f = e.target;
+  // до загрузки файлов: иначе они улетели бы в хранилище впустую
+  const who = document.getElementById("ncFormClient");
+  if (!state.TOKEN && !state.editingId && who && !who.value) {
+    toast("Выберите, для кого платёж: клиента или «Личная задача»");
+    who.focus();
+    return;
+  }
   if (state.TOKEN && weekendDueBlocked(f.due.value)) {
     toast("В выходной платёж не проводится — выберите рабочий день (пн–пт)");
     return;
@@ -297,7 +311,7 @@ async function onSubmit(e) {
     } else {
       // сотрудник заводит заявку: для своего клиента или личную напоминалку
       const sel = document.getElementById("ncFormClient");
-      const pickedId = sel && sel.value ? sel.value : null;
+      const pickedId = sel && sel.value && sel.value !== PERSONAL ? sel.value : null;
       const picked = pickedId ? state.clientsList.find(c => c.id === pickedId) : null;
       const rec = {
         id: genId(),

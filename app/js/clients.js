@@ -8,6 +8,9 @@ import { ico } from './icons.js';
 const SVG_OK   = ico("check", 12, "bare", 2.2);
 const SVG_WARN = ico("circleAlert", 12, "bare", 2.2);
 
+// значение пункта «Личная задача» в форме сотрудника: пустое занято «выберите»
+export const PERSONAL = "personal";
+
 export function baseLink(token) {
   return location.origin + location.pathname + "?t=" + encodeURIComponent(token);
 }
@@ -29,8 +32,12 @@ export function fillStaffClientSelect() {
   const sel = document.getElementById("ncFormClient");
   if (!sel) return;
   const cur = sel.value;
-  sel.innerHTML = '<option value="">— Личная задача (без клиента) —</option>' +
-    state.clientsList.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
+  // Без выбора по умолчанию: стояла «Личная задача», и забывший переключить
+  // заводил заявку клиента в личные — клиент её не видел, уведомлений не было.
+  // Теперь форма не отправится, пока не выбрали; личная задача — последней.
+  sel.innerHTML = '<option value="">— выберите клиента —</option>' +
+    state.clientsList.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join("") +
+    `<option value="${PERSONAL}">Личная задача (без клиента)</option>`;
   sel.value = cur;
 }
 

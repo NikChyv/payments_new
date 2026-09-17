@@ -38,7 +38,7 @@ const lastPart  = it => hasParts(it) ? it.parts[it.parts.length - 1] : null;
 
 // ---------- срочность: один сигнал — красная дата и мягкая заливка ----------
 function urgency(it) {
-  if (!activeOpen(it)) return {k:"", lbl:"—"};
+  if (!activeOpen(it)) return {k:"", lbl:""};
   const d = daysBetween(it.due);
   if (d < 0)  return {k:"crit", lbl:"просрочено " + Math.abs(d) + " дн."};
   if (d === 0)return {k:"warn", lbl:"сегодня до 17:00"};
@@ -63,7 +63,9 @@ function passQuick(it, qf) {
   if (qf === "overdue")   return activeOpen(it) && d < 0;
   if (qf === "today")     return activeOpen(it) && d === 0;
   if (qf === "prog")      return it.status === "in_progress";
-  if (qf === "waiting")   return activeOpen(it) && threadState(it) === "waiting";
+  // и оплаченная: спросить можно до закрытия (sent), и строка тогда уже
+  // зовёт «Напомнить» — значит и во вкладке ей место
+  if (qf === "waiting")   return it.status !== "sent" && threadState(it) === "waiting";
   if (qf === "await_doc") return it.status === "paid" && it.needReceipt;
   return true;
 }
@@ -90,9 +92,10 @@ export function computeCounts() {
     c.total++;
     if (passStatus(it, fs)) c.all++;
     if (it.status === "paid" && it.needReceipt) c.doc++;
+    // «Ждут ответа» — всё, кроме закрытых (sent): по закрытой клиент ответить
+    // уже не может, а по оплаченной — может, и её тоже ждут
+    if (it.status !== "sent" && threadState(it) === "waiting") c.wait++;
     if (!activeOpen(it)) return;
-    // «Ждут ответа» — только открытые: по закрытой ждать нечего
-    if (threadState(it) === "waiting") c.wait++;
     const d = daysBetween(it.due), r = restOf(it);
     c.openSum += r;
     if (d < 0)       { c.overdue++; c.due++; c.dueSum += r; }
@@ -222,7 +225,8 @@ function primaryOf(it, ts) {
     // 38 px до суммы на 961), «Приложить документ» вылезал на сумму на 19 px.
     // Полная подпись — в подсказке, в меню и в раскрытии.
     ? {a:"attach", t:ico("file") + "Документ", c:"", title:"Приложить платёжный документ — клиент получит его в Telegram"}
-    : {a:"send",   t:"Закрыть",            c:""};
+    // контуром: последний спокойный шаг, а не новая работа, — не путать с синей «В работу»
+    : {a:"send",   t:"Закрыть",            c:"line"};
   return null;
 }
 
@@ -354,7 +358,7 @@ function detHtml(it, ts, seen) {
     `<div class="full"><div class="q-dk">Вложения</div>` +
       (clientFiles.length || plainDocs.length
         ? `<div class="q-files">${fileLinks(clientFiles, false)}${fileLinks(plainDocs, true)}</div>`
-        : `<div class="q-dv mut">нет</div>`) + `</div>` +
+        : `<div class="q-dv mut">${(it.staffFiles || []).length ? "документы на части — ниже, в оплате по частям" : "нет"}</div>`) + `</div>` +
     partsHtml(it, seen) +
     ((it.thread || []).length
       ? `<div class="full"><div class="q-dk">Переписка по заявке</div><div class="q-thread">${threadHtml(it)}</div></div>` : "") +
@@ -924,7 +928,9 @@ export function initQueue() {
     if (!f) return;
     state.quickFilter = f.getAttribute("data-f");
     // «Отправить документ» — оплаченные, в активных их нет
-    $("fStatus").value = state.quickFilter === "await_doc" ? "all" : "active";
+    // «Отправить документ» — оплаченные, в активных их нет; «Ждут ответа» — и
+    // оплаченные тоже
+    $("fStatus").value = state.quickFilter === "await_doc" || state.quickFilter === "waiting" ? "all" : "active";
     state.openId = null;
     render();
   });
