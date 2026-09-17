@@ -1,19 +1,32 @@
+/* Палитра — цвета логотипа ITnimax: тёмно-синий #2F4A73 и голубой #7FB3C6
+   (редизайн, шаг 2). Значения взяты из утверждённых пробников очереди «B» и
+   переписки, нейтрали уведены в синий, а не в мёртвый серый. Имена переменных
+   остались от прежней палитры, чтобы перекраска не трогала правила:
+     --accent  — фирменный синий (кнопки, активные вкладки, шаг «сейчас»);
+     --blue    — голубой логотипа, приглушённый до читаемого: «в работе»,
+                 периодичность, «клиент ответил», сообщения клиента;
+     --purple  — «документ отправлен»: фиолетового в фирменных цветах нет,
+                 закрытая заявка — спокойный синий;
+     --orange  — «сегодня», --amber — «скоро» и вопрос клиенту. До переделки
+                 очереди (шаг 4) они близки: в макете B «скоро» не подсвечивается.
+   --muted чуть темнее пробника (#62708A): на фоне страницы тот давал 4.3:1,
+   ниже порога 4.5 для мелкого текста; теперь 4.6. */
 :root{
-  --bg:#f4f5f8; --card:#ffffff; --ink:#1d2433; --muted:#6b7280;
-  --line:#e6e8ef; --accent:#4f46e5; --accent-d:#4338ca;
-  --red:#dc2626; --red-bg:#fde8e8; --orange:#ea580c; --orange-bg:#fff0e6;
-  --amber:#b45309; --amber-bg:#fff7e0; --gray:#475569; --gray-bg:#eef1f6;
-  --green:#16a34a; --green-bg:#e7f6ec; --blue:#2563eb; --blue-bg:#e7effe;
-  --on-accent:#fff; --on-accent-dim:rgba(255,255,255,.72); --accent-rgb:79,70,229;
-  --accent-bg:#eef2ff; --accent-tint:#f5f7ff; --accent-line:#c7d2fe; --accent-ink:#3730a3;
-  --red-line:#f0c9c9; --red-line-banner:#f5c2c2; --red-row:#fff7f7; --red-row-line:#fca5a5;
-  --orange-row:#fffbf3; --orange-row-line:#fdba74;
-  --amber-line:#f0dcae; --amber-ink:#7c4a02;
-  --green-line:#bfe3cb; --green-line-msg:#b6e2c4;
-  --blue-line:#c9dcfd; --purple:#6d28d9; --purple-bg:#ede9fe;
-  --soft:#f1f5f9; --soft-ink:#334155; --sunk:#f8fafc; --sunk-hover:#eef2f7;
-  --line-strong:#cbd4e0; --faint:#9ca3af; --step-off:#e5e7eb;
-  --scrim:rgba(15,23,42,.45); --shadow-ovl:0 24px 60px -20px rgba(15,23,42,.4);
+  --bg:#E9EFF6; --card:#FFFFFF; --ink:#0B1220; --muted:#5E6C86;
+  --line:#E0E8F1; --accent:#2F4A73; --accent-d:#22385A;
+  --red:#B0332A; --red-bg:#FBEDEC; --orange:#95610A; --orange-bg:#FCF2E2;
+  --amber:#8A6008; --amber-bg:#FEF8EB; --gray:#56637F; --gray-bg:#ECEFF5;
+  --green:#1B7A4C; --green-bg:#E3F3EA; --blue:#2F6F86; --blue-bg:#E4F0F5;
+  --on-accent:#fff; --on-accent-dim:rgba(255,255,255,.72); --accent-rgb:47,74,115;
+  --accent-bg:#E8EFF8; --accent-tint:#F5F9FD; --accent-line:#C9D5E5; --accent-ink:#22385A;
+  --red-line:#EDC6C2; --red-line-banner:#EDC6C2; --red-row:#FBEFEC; --red-row-line:#E6B3AD;
+  --orange-row:#FCF6E7; --orange-row-line:#E6CB94;
+  --amber-line:#EFD8A8; --amber-ink:#7A5410;
+  --green-line:#C6E3D3; --green-line-msg:#C6E3D3;
+  --blue-line:#CBE4EC; --purple:#2F4A73; --purple-bg:#E8EFF8;
+  --soft:#EEF3F8; --soft-ink:#33415A; --sunk:#F5F9FD; --sunk-hover:#E8EFF8;
+  --line-strong:#C9D5E5; --faint:#93A1B8; --step-off:#E4EAF0;
+  --scrim:rgba(11,18,32,.44); --shadow-ovl:0 24px 60px -20px rgba(20,35,60,.4);
   --shadow-toast:0 8px 30px rgba(0,0,0,.25);
   --radius:14px;
 }
