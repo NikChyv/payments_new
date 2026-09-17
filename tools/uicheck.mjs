@@ -14,7 +14,8 @@
 //   node tools/uicheck.mjs --out .      # куда класть снимки
 //   node tools/uicheck.mjs --serve      # просто держать стенд для ручного прохода
 //
-// Экраны: кабинет клиента, окно ответа клиента, форма клиента, вход, очередь
+// Экраны: кабинет клиента, окно ответа клиента, форма клиента (новая и
+// «Исправить»), вход, очередь
 // («нужно сегодня» и «все статусы»), раскрытая строка с частями, меню «…»,
 // окно «Оплатить часть», окно переписки, форма сотрудника, «Клиенты».
 // Перед съёмкой в локальную базу кладётся фикстура — заявки `ui-*` во всех
@@ -80,6 +81,14 @@ async function fixture(staffId) {
     { id: "ui-7", ...SMI, payee: "ИП Ковалёв", amount: 800, requisites: "УНП 190000004",
       due: day(-1), recurrence: "once", purpose: "Аренда склада", status: "paid", need_receipt: true,
       paid_amount: 650, parts: [part("ui-p2", 400, day(-6), day(-3)), part("ui-p3", 250, day(-3), day(-1))] },
+    // Те же части глазами клиента (шаг 6): кабинет по токену — это «Ромашка».
+    { id: "ui-8", ...ROM, payee: "РУП «Минскэнерго»", amount: 640, requisites: "УНП 100000005",
+      due: day(4), recurrence: "monthly", purpose: "Электроэнергия за август", status: "in_progress", need_receipt: true,
+      paid_amount: 240, parts: [part("ui-p4", 240, day(-1), day(4))],
+      staff_files: [{ ...file("platezhka-2.pdf"), part_id: "ui-p4" }] },
+    { id: "ui-9", ...ROM, payee: "ИП Лапицкий", amount: 300, requisites: "счёт 118",
+      due: day(-3), recurrence: "once", purpose: "Ремонт принтера", status: "paid",
+      paid_amount: 250, parts: [part("ui-p5", 250, day(-3), day(-3))] },
   ];
   for (const row of rows) {   // по одной: пакетная вставка требует одинаковых ключей
     const r = await fetch(`${API}/rest/v1/payments`, { method: "POST",
@@ -166,6 +175,8 @@ try {
   await click("button[data-clreply]");     await shot("reply");
   await go(`${base}?t=${TOKEN}`);
   await click("#tabForm");                 await shot("clform");
+  await go(`${base}?t=${TOKEN}`);
+  await click("button[data-edit]");        await shot("cledit");
   await go(base);                           await shot("login");
   await ev(`(async () => {
     const c = window.supabase.createClient(${JSON.stringify(API)}, ${JSON.stringify(ANON)});

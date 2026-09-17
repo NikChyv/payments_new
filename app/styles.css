@@ -58,6 +58,9 @@
   --teal:#4E8DA6; --teal-lt:#7FB3C6; --clip-line:#BEDCE7; --clip-hover:#D6EAF1;
   --green-d:#14603A; --gray-d:#454F66; --crit-on:#F2A9A2; --warn-on:#F0C98A;
   --shadow-sheet:0 1px 2px rgba(20,35,60,.06),0 14px 34px -16px rgba(20,35,60,.28);
+  /* кабинет клиента C (шаг 6): нейтрали пробника C, край карточки «ждём ответ» */
+  --c-bg:#EFF4F8; --c-ink:#16202E; --c-ink2:#33455E; --c-line:#DFE6ED; --c-line2:#C8D5E1;
+  --c-ask-edge:#D9A441; --c-shadow:0 1px 2px rgba(22,32,46,.05),0 12px 30px -16px rgba(22,32,46,.25);
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);
@@ -66,29 +69,23 @@ body.client-mode{font-family:Manrope,"Segoe UI",system-ui,-apple-system,Roboto,A
 /* Кнопки и поля по умолчанию берут шрифт браузера (Arial на Windows), а не
    страницы: без этого половина интерфейса осталась бы в старом шрифте. */
 button,input,select,textarea{font-family:inherit}
-/* Шапка — фирменный синий, как в пробниках B и C (шаг 5). Одна на обе роли:
-   кабинет клиента получит своё (название фирмы, шаги) на шаге 6. */
+/* Шапка — фирменный синий, как в пробниках B и C. Кабинет клиента
+   перестраивает её под себя — блок «Кабинет клиента» ниже. */
 header{background:var(--accent);position:sticky;top:0;z-index:20}
-/* очередь — таблица на шесть колонок, ей нужна ширина пробника B; кабинет
-   клиента — карточки, ему прежняя */
+/* очередь — таблица на шесть колонок, ей нужна ширина пробника B; кабинету
+   клиента своя, уже */
 .wrap{max-width:1220px;margin:0 auto;padding:0 20px}
-body.client-mode .wrap{max-width:1020px}
 .topbar{display:flex;align-items:center;gap:13px;min-height:60px;padding:8px 0}
 /* логотип — на белой плашке: знак того же синего, что и шапка */
 .plate{width:34px;height:34px;border-radius:10px;background:var(--card);flex:none;
   display:flex;align-items:center;justify-content:center}
 .logo{width:25px;height:25px;flex:none;object-fit:contain;display:block}
 .brand h1{font-size:15.5px;margin:0;line-height:1.1;font-weight:700;letter-spacing:-.02em;color:var(--on-accent)}
-/* подпись сервиса у сотрудника не нужна (в макете B её нет), у клиента пока
-   остаётся — до переноса кабинета */
-.brand p{display:none;margin:2px 0 0;font-size:12px;color:var(--hdr-dim)}
-body.client-mode .brand p{display:block}
 /* Golos шире системного шрифта: вкладки и «кто вошёл» переносились на две
-   строки уже на 1280. Им — одна строка, сжимается только подпись сервиса. */
+   строки уже на 1280. Им — одна строка. */
 .brand{min-width:0}
 .tab,.staff-box{white-space:nowrap}
 .tabs{display:flex;gap:6px;margin-left:26px}
-body.client-mode .tabs{margin-left:auto}
 .tab{border:0;background:none;color:var(--hdr-dim);padding:7px 13px;border-radius:8px;
   cursor:pointer;font-size:13.5px;font-weight:600}
 .tab:hover{color:var(--on-accent);background:var(--hdr-hover)}
@@ -96,27 +93,6 @@ body.client-mode .tabs{margin-left:auto}
 .tab:focus-visible{outline:2px solid var(--on-accent);outline-offset:2px}
 main{padding:22px 0 60px}
 .ghost{margin-left:auto;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px 14px;cursor:pointer;font-size:13px;color:var(--muted)}
-/* list — карточки кабинета клиента (очередь сотрудника — .qr ниже) */
-.row{background:var(--card);border:1px solid var(--line);border-left-width:5px;border-radius:12px;padding:14px 16px;margin-bottom:10px;
-  display:flex;gap:16px;align-items:flex-start}
-.row.b-gray{border-left-color:var(--gray)}
-.row.b-green{border-left-color:var(--green)}
-.linkbtn{background:none;border:none;padding:0;cursor:pointer;font:inherit;
-  color:var(--accent);font-weight:600;text-decoration:underline}
-.row .main{flex:1;min-width:0}
-.row .head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.payee{font-weight:700;font-size:15.5px}
-.amount{font-weight:700;font-size:15.5px;margin-left:auto;white-space:nowrap}
-.meta{color:var(--muted);font-size:13px;margin-top:5px;display:flex;flex-wrap:wrap;gap:4px 14px}
-.meta b{color:var(--ink);font-weight:600}
-.badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
-.badge{font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:20px}
-.b-rec{background:var(--blue-bg);color:var(--blue)}
-.b-file{background:var(--soft);color:var(--soft-ink);cursor:pointer;text-decoration:none}
-.b-file .clip{font-size:18px;line-height:1;vertical-align:-2px;margin-right:2px}
-/* документ ОТ бухгалтера — зелёный, чтобы не путался со счётом ОТ клиента,
-   который лежит в той же строке серым */
-.b-doc{background:var(--green-bg);color:var(--green);cursor:pointer;text-decoration:none;font-weight:600}
 .btn{border:none;border-radius:10px;padding:9px 12px;font-size:13.5px;font-weight:600;cursor:pointer;text-align:center}
 .btn.p{background:var(--accent);color:var(--on-accent)} .btn.p:hover{background:var(--accent-d)}
 .btn.p:disabled{opacity:.6;cursor:default}
@@ -144,12 +120,11 @@ main{padding:22px 0 60px}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .hidden{display:none!important}
 @media(max-width:760px){
-  .row{flex-direction:column}
   .two{grid-template-columns:1fr}
   /* шапка в две строки: знак, название и «кто вошёл» — сверху, вкладки — во
      всю ширину под ними */
   .topbar{flex-wrap:wrap;gap:10px}
-  .tabs,body.client-mode .tabs{order:4;width:100%;margin:0 0 4px} .tab{flex:1}
+  .tabs{order:4;width:100%;margin:0 0 4px} .tab{flex:1}
   .tab,.staff-box{white-space:normal}
   .staff-box{font-size:12px;gap:9px}
 }
@@ -157,10 +132,6 @@ main{padding:22px 0 60px}
 .client-only{display:none}
 body.client-mode .client-only{display:block}
 body.client-mode .staff-only{display:none!important}
-.mylist-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px}
-.mylist-top h2{margin:0;font-size:18px}
-.mylist-top .who{color:var(--muted);font-size:13px}
-.mylist-sub{margin:2px 0 16px;color:var(--muted);font-size:13.5px}
 /* панель поиска и фильтра в кабинете клиента */
 .cl-panel{display:flex;flex-direction:column;gap:9px;margin:0 0 14px}
 .cl-search{display:flex;align-items:center;gap:8px;background:var(--card);
@@ -204,24 +175,184 @@ body.client-mode .staff-only{display:none!important}
   .cl-row{flex-wrap:wrap}
   .cl-row .cl-chips{flex-basis:100%}
 }
-.cl-status{margin-top:11px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.cl-now{display:inline-flex;align-items:center;gap:7px;font-weight:700;font-size:13.5px;padding:6px 12px;border-radius:20px}
-.cl-now.s-new{background:var(--gray-bg);color:var(--gray)}
-.cl-now.s-prog{background:var(--blue-bg);color:var(--blue)}
-.cl-now.s-paid,.cl-now.s-sent{background:var(--green-bg);color:var(--green)}
-.cl-now.s-ask{background:var(--amber-bg);color:var(--amber)}
-.steps{display:flex;align-items:center;flex-wrap:wrap;gap:5px;margin-top:13px}
-.step{display:flex;align-items:center;gap:7px}
-.step .dot{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;
-  font-size:12px;font-weight:700;background:var(--step-off);color:var(--faint);flex:none}
-.step.done .dot{background:var(--green);color:var(--on-accent)}
-.step.active .dot{background:var(--accent);color:var(--on-accent);box-shadow:0 0 0 3px rgba(var(--accent-rgb),.18)}
-.step .lab{font-size:12px;color:var(--muted)}
-.step.done .lab,.step.active .lab{color:var(--ink);font-weight:600}
-.bar{height:2px;width:18px;background:var(--step-off);border-radius:2px;flex:none}
-.bar.done{background:var(--green)}
-body.client-mode input[name=client]{font-size:19px;font-weight:700;color:var(--ink);background:var(--accent-tint);border-color:var(--accent-line)}
-body.client-mode .fg:first-of-type label{font-size:14px}
+/* ===== Кабинет клиента — направление C «Фирменный» (редизайн, шаг 6) =====
+   Клиент заходит пару раз в месяц и часто с телефона: плотность не нужна,
+   нужны понятность и доверие. Всё под body.client-mode или с префиксом c-:
+   #list и форма общие с сотрудником, и его экраны задевать нельзя.
+   Нейтрали — из пробника C (чуть светлее фон и мягче линии, чем в очереди);
+   --muted оставлен свой: у пробника C он на фоне давал контраст 4.4. */
+body.client-mode{--bg:var(--c-bg);--ink:var(--c-ink);--line:var(--c-line);--line-strong:var(--c-line2);
+  font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+/* шапка в две строки — знак и фирма, под ними вкладки во всю ширину; не
+   липкая: на телефоне заняла бы четверть экрана */
+body.client-mode header{position:static}
+body.client-mode .wrap{max-width:780px}
+/* main{padding} сверху файла перебивает .wrap (класс сильнее тега) — возвращаем
+   кабинету воздух между шапкой и заголовком */
+body.client-mode main.wrap{padding-top:22px;padding-bottom:60px}
+body.client-mode .topbar{flex-wrap:wrap;gap:12px;min-height:0;padding:14px 0 0}
+body.client-mode .plate{width:38px;height:38px}
+body.client-mode .logo{width:27px;height:27px}
+body.client-mode .brand{display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px}
+body.client-mode .brand h1{font-size:14px;font-weight:700;letter-spacing:-.015em;color:var(--hdr-dim);white-space:nowrap}
+/* Название фирмы крупнее названия сервиса: это ЕГО кабинет */
+.firm{font-size:19px;font-weight:800;letter-spacing:-.028em;line-height:1.25;color:var(--on-accent);
+  overflow-wrap:anywhere;padding-left:12px;border-left:1px solid var(--hdr-line)}
+body.client-mode .tabs{order:4;width:100%;margin:0;padding:0 0 14px;display:grid;grid-template-columns:1fr 1fr;gap:5px}
+body.client-mode .tab{height:44px;border-radius:10px;font-size:14px;font-weight:700;color:var(--on-accent-dim);
+  display:flex;align-items:center;justify-content:center}
+body.client-mode .tab.active{background:var(--card);color:var(--accent)}
+
+.c-ok{display:flex;gap:11px;align-items:flex-start;background:var(--green-bg);border:1px solid var(--green-line);
+  border-radius:12px;padding:14px 16px;margin-bottom:16px;font-size:13px;color:var(--c-ink2)}
+.c-ok svg{flex:none;color:var(--green);margin-top:1px}
+.c-ok b{display:block;font-size:14px;font-weight:800;color:var(--green)}
+.c-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px 16px;margin-bottom:16px;flex-wrap:wrap}
+.c-head h2{margin:0;font-size:24px;font-weight:800;letter-spacing:-.028em;line-height:1.2}
+.c-head p{margin:4px 0 0;font-size:13.5px;color:var(--muted);max-width:52ch;line-height:1.45}
+.c-ref{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--card);border-radius:10px;
+  padding:9px 14px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer}
+.c-ref:hover{border-color:var(--accent);background:var(--accent-bg)}
+body.client-mode .cl-search,body.client-mode .cl-chip{border-radius:10px}
+
+/* карточка заявки */
+.c-card{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--teal-lt);border-radius:14px;
+  padding:16px 18px;margin-bottom:11px;display:flex;flex-direction:column;gap:13px;box-shadow:var(--c-shadow)}
+.c-card.done{border-left-color:var(--green)}
+.c-card.late{border-left-color:var(--red)}
+.c-card.ask{border-left-color:var(--c-ask-edge)}
+.c-r1{display:flex;align-items:flex-start;gap:8px 14px;flex-wrap:wrap}
+.c-who-col{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.c-nm{font-size:17px;font-weight:800;letter-spacing:-.022em;line-height:1.3;overflow-wrap:anywhere}
+.c-meta{font-size:12.5px;color:var(--muted);font-weight:600;display:flex;gap:2px 12px;flex-wrap:wrap}
+.c-meta span{overflow-wrap:anywhere}
+.c-meta b{color:var(--c-ink2);font-weight:700}
+.c-meta .late{color:var(--red)}
+.c-right{display:flex;align-items:center;gap:11px}
+.c-amt{font-size:19px;font-weight:800;letter-spacing:-.03em;white-space:nowrap}
+.c-pill{font-size:11.5px;font-weight:800;padding:5px 11px;border-radius:20px;white-space:nowrap}
+.c-pill.new{background:var(--gray-bg);color:var(--gray)}
+.c-pill.prog{background:var(--accent-bg);color:var(--accent)}
+.c-pill.ok{background:var(--green-bg);color:var(--green)}
+.c-pill.ask{background:var(--amber-bg);color:var(--amber)}
+.c-purp{font-size:13.5px;color:var(--c-ink2);line-height:1.45;overflow-wrap:anywhere}
+.c-files{display:flex;flex-wrap:wrap;gap:6px}
+/* счёт ОТ клиента — голубой, документ ОТ бухгалтера — зелёный */
+.c-file{display:inline-flex;align-items:center;gap:6px;max-width:100%;background:var(--blue-bg);border:1px solid var(--clip-line);
+  border-radius:8px;padding:5px 10px;font-size:12px;font-weight:700;color:var(--blue);text-decoration:none;overflow-wrap:anywhere}
+.c-file svg{flex:none}
+a.c-file:hover{background:var(--clip-hover)}
+.c-file.doc{background:var(--green-bg);border-color:var(--green-line);color:var(--green)}
+a.c-file.doc:hover{border-color:var(--green)}
+
+/* оплата по частям */
+.c-parts{background:var(--sunk);border:1px solid var(--line);border-radius:12px;padding:12px 14px;
+  display:flex;flex-direction:column;gap:8px}
+.c-parts-h{display:flex;justify-content:space-between;flex-wrap:wrap;gap:2px 14px;font-size:13px;color:var(--c-ink2)}
+.c-parts-h b{color:var(--ink);font-weight:800}
+.c-pbar{height:6px;border-radius:4px;background:var(--step-off);overflow:hidden}
+.c-pbar i{display:block;height:100%;border-radius:4px;background:var(--green)}
+.c-part{display:flex;align-items:center;flex-wrap:wrap;gap:6px 12px;padding-top:8px;border-top:1px solid var(--line);
+  font-size:12.5px;color:var(--muted)}
+.c-part b{font-size:13px;font-weight:700;color:var(--ink)}
+
+/* шаги */
+.c-track{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--line)}
+.c-st{display:flex;align-items:center;gap:7px}
+.c-dot{width:22px;height:22px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:800;background:var(--step-off);color:var(--faint)}
+.c-dot.done{background:var(--green);color:var(--on-accent)}
+.c-dot.now{background:var(--accent);color:var(--on-accent);box-shadow:0 0 0 3px rgba(var(--accent-rgb),.16)}
+.c-slab{font-size:12px;font-weight:700;color:var(--muted)}
+.c-slab.on{color:var(--ink)}
+.c-bar{height:2px;width:22px;border-radius:2px;flex:none;background:var(--step-off)}
+.c-bar.done{background:var(--green)}
+/* На узком экране подписи шагов скрыты — вместо них словами текущий шаг,
+   иначе от трекера остаются голые кружки с цифрами. */
+.c-stepnow{display:none;margin-top:-6px;font-size:12.5px;font-weight:700;color:var(--accent)}
+.c-stepnow.ok{color:var(--green)}
+
+/* переписка; поле ответа — в окне #clrBox, не здесь (поллинг) */
+.c-thread{background:var(--sunk);border:1px solid var(--line);border-radius:12px;padding:12px;
+  display:flex;flex-direction:column;gap:8px}
+.c-thread.ask{background:var(--amber-bg);border-color:var(--amber-line)}
+.c-thread-h{font-size:12.5px;font-weight:700;color:var(--muted)}
+.c-thread.ask .c-thread-h{color:var(--amber)}
+.c-msg{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 11px}
+.c-msg.me{background:var(--blue-bg);border-color:var(--blue-line)}
+.c-msg.q{border-color:var(--amber-line)}
+.c-who{display:block;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.c-msg.me .c-who{color:var(--blue)}
+.c-text{margin-top:2px;font-size:13.5px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere}
+.c-msg.q .c-text{font-size:14.5px}
+.c-msg .c-files{margin-top:6px}
+.c-thread .c-b{align-self:flex-start}
+
+.c-acts{display:flex;gap:8px;flex-wrap:wrap}
+.c-b{height:40px;padding:0 15px;display:inline-flex;align-items:center;justify-content:center;gap:7px;border-radius:10px;
+  border:1px solid var(--line-strong);background:var(--card);color:var(--accent);font-size:13.5px;font-weight:700;
+  white-space:nowrap;cursor:pointer}
+.c-b:hover{border-color:var(--accent);background:var(--accent-bg)}
+.c-b.pri{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.c-b.pri:hover{background:var(--accent-d)}
+.c-b:focus-visible,.c-ref:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.c-empty{background:var(--card);border:1px dashed var(--line-strong);border-radius:14px;padding:38px 22px;text-align:center}
+.c-empty b{display:block;font-size:16px;font-weight:800;margin-bottom:5px}
+.c-empty p{margin:0 0 16px;font-size:13.5px;color:var(--muted)}
+
+/* форма. Зона выбора файлов и галочка документа — общие с сотрудником. */
+.opt{font-weight:500;color:var(--muted)}
+.fg input.vh{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;
+  clip:rect(0 0 0 0);white-space:nowrap}
+.fg .drop{display:flex;flex-direction:column;align-items:center;gap:4px;margin:0;padding:18px;text-align:center;
+  border:1.5px dashed var(--line-strong);border-radius:12px;background:var(--sunk);cursor:pointer}
+.fg .drop:hover{border-color:var(--teal);background:var(--blue-bg)}
+.fg input.vh:focus-visible + .drop{outline:2px solid var(--accent);outline-offset:2px}
+.fg .drop svg{color:var(--teal)}
+.fg .drop b{font-size:13.5px;font-weight:700}
+.fg .drop span{font-size:12px;font-weight:500;color:var(--muted)}
+.check{display:flex;align-items:flex-start;gap:11px;margin:0 0 16px;padding:13px 14px;cursor:pointer;
+  background:var(--sunk);border:1px solid var(--line);border-radius:12px}
+.check input{width:20px;height:20px;margin:1px 0 0;flex:none;accent-color:var(--accent);cursor:pointer}
+.check b{display:block;font-size:13.5px;font-weight:700}
+.check .client-only{font-size:12px;color:var(--muted)}
+.f-accent{height:3px;width:52px;border-radius:2px;background:var(--teal-lt);margin:0 0 18px}
+.f-cancel{display:block;width:100%;margin-top:10px;padding:11px;border:0;border-radius:10px;background:none;
+  font-size:14px;font-weight:700;color:var(--muted);cursor:pointer}
+.f-cancel:hover{color:var(--accent);background:var(--accent-bg)}
+body.client-mode #clientFieldBox{display:none}
+body.client-mode .form{max-width:none;border-radius:16px;padding:22px;box-shadow:var(--c-shadow)}
+body.client-mode .form h2{font-size:21px;font-weight:800;letter-spacing:-.026em;line-height:1.25}
+body.client-mode .form .sub{margin:4px 0 14px;line-height:1.45}
+body.client-mode .fg{margin-bottom:16px}
+/* поля в два столбца на телефоне встают в один: отступ между ними даёт .fg */
+body.client-mode .two{row-gap:0}
+body.client-mode .fg label{font-weight:800}
+body.client-mode .check b{font-weight:800}
+/* 16px — меньше нельзя: iOS Safari зумит страницу при тапе по полю */
+body.client-mode .fg input,body.client-mode .fg select,body.client-mode .fg textarea{min-height:46px;font-size:16px;padding:11px 13px}
+body.client-mode .fg textarea{min-height:76px}
+body.client-mode .fg input:focus,body.client-mode .fg select:focus,body.client-mode .fg textarea:focus{
+  outline:none;border-color:var(--teal);box-shadow:0 0 0 3px var(--blue-bg)}
+body.client-mode .submit{height:52px;padding:0;border-radius:12px;font-size:16px;font-weight:800;margin-top:0}
+.clr-files{margin-top:12px}
+
+@media(max-width:560px){
+  /* только бока: .wrap стоит и на шапке, и сокращённый padding съедал её верхний отступ */
+  body.client-mode .wrap{padding-left:13px;padding-right:13px}
+  /* фирма уходит на свою строку — разделитель тогда лишний */
+  body.client-mode .brand h1{font-size:12.5px;width:100%}
+  .firm{font-size:17px;padding-left:0;border-left:0}
+  .c-head h2{font-size:21px}
+  .c-card{padding:14px;border-radius:12px}
+  .c-right{width:100%;justify-content:space-between}
+  .c-amt{font-size:18px}
+  .c-acts .c-b{flex:1 1 auto}
+  .c-slab{display:none}
+  .c-stepnow{display:block}
+  .c-bar{width:14px}
+  body.client-mode .form{padding:17px;border-radius:14px}
+}
 /* вход сотрудника */
 #view-login{max-width:380px;margin:48px auto 0}
 .login-card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:26px}
@@ -304,14 +435,6 @@ body.client-mode .fg:first-of-type label{font-size:14px}
 .th-warn{background:var(--amber-bg);color:var(--amber);border-radius:10px;padding:10px 12px;
   font-size:12.5px;line-height:1.45;margin-bottom:14px}
 
-/* переписка на карточке в кабинете клиента */
-.cl-thread{margin-top:12px;border:1px solid var(--line);border-radius:12px;padding:11px 12px;
-  display:flex;flex-direction:column;gap:8px;background:var(--sunk)}
-.cl-thread.ask{background:var(--amber-bg);border-color:var(--amber-line)}
-.cl-thread-h{font-size:12.5px;font-weight:700;color:var(--amber)}
-.cl-answer{align-self:flex-start;background:var(--accent);color:var(--on-accent);border:none;border-radius:10px;
-  padding:9px 14px;font-size:13.5px;font-weight:700;cursor:pointer;font-family:inherit}
-.cl-answer:hover{background:var(--accent-d)}
 .clr-q{background:var(--amber-bg);color:var(--amber-ink);border-radius:10px;padding:11px 12px;
   font-size:13.5px;line-height:1.45;margin-bottom:14px;white-space:pre-wrap;overflow-wrap:anywhere}
 

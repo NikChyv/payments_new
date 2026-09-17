@@ -185,22 +185,6 @@ const DOC  = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke
 const DOTS = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>';
 const REC  = t => `<svg class="rec" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" role="img" aria-label="${t}"><title>${t}</title><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>`;
 
-// Используются кабинетом клиента (client_view.js) — до его переноса (шаг 6)
-// в старом виде.
-export function fileBadges(it) {
-  return (it.files || []).map(f => f.url
-    ? `<a class="badge b-file" href="${esc(safeUrl(f.url))}" target="_blank" rel="noopener" title="Открыть файл">📎 ${esc(f.name || "файл")}</a>`
-    : `<span class="badge b-file" title="${esc(f.name || "файл")}">📎 ${esc(f.name || "файл")}</span>`
-  ).join("");
-}
-
-export function staffFileBadges(it) {
-  return (it.staffFiles || []).map(f => f.url
-    ? `<a class="badge b-doc" href="${esc(safeUrl(f.url))}" target="_blank" rel="noopener" title="Платёжный документ">📄 ${esc(f.name || "документ")}</a>`
-    : `<span class="badge b-doc">📄 ${esc(f.name || "документ")}</span>`
-  ).join("");
-}
-
 // Счёт ОТ клиента и платёжка ДЛЯ него лежат рядом — разные иконки и цвет,
 // путать их нельзя.
 function fileLinks(list, doc) {

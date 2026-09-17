@@ -1,11 +1,9 @@
 import { sb, useRemote, fromRow, uploadFiles } from './supabase.js';
 import { state } from './state.js';
 import { esc, safeUrl, toast } from './utils.js';
-import { fmtDate, fmtMoney } from './dates.js';
-import { fileBadges, staffFileBadges } from './queue.js';
+import { fmtDate, fmtMoney, todayStr, isoLocal } from './dates.js';
+import { activeOpen } from './queue.js';
 import { threadState } from './thread.js';
-
-const recLbl = {once:"Разовый", weekly:"Еженедельно", monthly:"Ежемесячно"};
 
 // ---------- Supabase RPC (Шаг 7) ----------
 
@@ -76,98 +74,173 @@ export async function replyByToken(token, id, text, files) {
   return res.data;
 }
 
-// ---------- Рендер клиентского списка ----------
-
-function activeOpen(it) { return it.status === "new" || it.status === "in_progress"; }
-
-function clStatusInfo(it) {
-  // Вопрос бухгалтера важнее стадии: пока на него не ответили, заявка стоит
-  // именно из-за этого, и человек должен видеть причину, а не «ждёт оплаты».
-  if (activeOpen(it) && threadState(it) === "waiting")
-    return {cls:"s-ask", icon:"❓", text:"Бухгалтер ждёт вашего ответа"};
-  if (it.status === "in_progress") return {cls:"s-prog", icon:"⏳", text:"Бухгалтер взял в работу"};
-  if (it.status === "paid")        return {cls:"s-paid", icon:"✅", text: it.needReceipt ? "Оплачено, готовим документ" : "Оплачено"};
-  if (it.status === "sent")        return {cls:"s-sent", icon:"✅", text: it.needReceipt ? "Оплачено, документ отправлен" : "Оплачено"};
-  return {cls:"s-new", icon:"🕓", text:"Принята, ждёт оплаты"};
-}
-
-export function clSteps(it) {
-  const withReceipt = it.needReceipt;
-  const labels = withReceipt ? ["Принята","В работе","Оплачено","Документ"] : ["Принята","В работе","Оплачено"];
-  const stage = ({new:1, in_progress:2, paid:3, sent:4})[it.status] || 1;
-  const fullyDone = withReceipt ? it.status === "sent" : (it.status === "paid" || it.status === "sent");
-  const parts = [];
-  for (let i = 0; i < labels.length; i++) {
-    let cls = "", dot = String(i + 1);
-    if (fullyDone || i + 1 < stage)  { cls = "done";   dot = "✓"; }
-    else if (i + 1 === stage)         { cls = "active"; }
-    if (i > 0) {
-      const prevDone = fullyDone || i < stage;
-      parts.push(`<div class="bar${prevDone ? " done" : ""}"></div>`);
-    }
-    parts.push(`<div class="step ${cls}"><span class="dot">${dot}</span><span class="lab">${labels[i]}</span></div>`);
-  }
-  return `<div class="steps">${parts.join("")}</div>`;
-}
-
-// Переписка на карточке заявки.
+// ---------- Рендер клиентского списка: направление C «Фирменный» ----------
 //
-// Само поле ответа живёт НЕ здесь, а в окне за пределами #list: список
-// перерисовывается поллингом раз в 15 секунд, и текст, который человек набирает,
-// вместе с кареткой просто исчез бы на середине слова.
-function clThreadHtml(it) {
-  const list = it.thread || [];
-  if (!list.length) return "";
+// Карточка на заявку. Классы с префиксом c-: #list общий с очередью, а у той
+// свои q-*, — так правка одного экрана не задевает другой.
 
-  const waiting = threadState(it) === "waiting" && it.status !== "sent";
-  const msgs = list.map(m => {
-    const files = (m.files || [])
-      .filter(f => f && f.url)
-      .map(f => `<a class="th-file" href="${esc(safeUrl(f.url))}" target="_blank" rel="noopener">📎 ${esc(f.name || "файл")}</a>`)
-      .join("");
-    return `<div class="th-msg ${m.who === "client" ? "cl" : "st"}">` +
-      `<div class="th-who">${m.who === "client" ? "Вы" : "Бухгалтер"}</div>` +
-      `<div class="th-text">${esc(m.text || "")}</div>` +
-      (files ? `<div class="th-files">${files}</div>` : "") +
+const recWord = {weekly:"еженедельно", monthly:"ежемесячно"};
+const cents   = v => Math.round(Number(v) * 100) / 100;
+const paidOf  = it => Number(it.paidAmount) || 0;
+
+const SVG_CHECK = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+const SVG_CLIP  = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.4 11.05-9.15 9.15a5.5 5.5 0 0 1-7.78-7.78l9.19-9.19a3.67 3.67 0 0 1 5.18 5.19l-9.2 9.19a1.83 1.83 0 0 1-2.59-2.59l8.49-8.48"/></svg>';
+const SVG_DOC   = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>';
+
+// Вопрос бухгалтера ждёт ответа. По закрытой (sent) заявке ответить уже
+// нельзя — сервер не примет, значит и звать к ответу нечего.
+const askOpen = it => threadState(it) === "waiting" && it.status !== "sent";
+
+// Счёт ОТ клиента — голубой со скрепкой, документ ОТ бухгалтера — зелёный:
+// в одной строке их путать нельзя.
+function fileChips(list, doc) {
+  return list.map(f => {
+    const cls = `c-file${doc ? " doc" : ""}`;
+    const body = (doc ? SVG_DOC : SVG_CLIP) + esc(f.name || (doc ? "документ" : "файл"));
+    return f.url
+      ? `<a class="${cls}" href="${esc(safeUrl(f.url))}" target="_blank" rel="noopener"${doc ? ' title="Платёжный документ"' : ""}>${body}</a>`
+      : `<span class="${cls}">${body}</span>`;
+  }).join("");
+}
+
+// Метка статуса. Класс — через мапу, а не именем статуса: в пробнике C стиль
+// назывался .prog, а рендер ставил in_progress, и «в работе» выходила без цвета.
+function pillOf(it) {
+  if (activeOpen(it) && askOpen(it)) return ["ask", "Нужен ваш ответ"];
+  if (it.status === "in_progress")    return ["prog", paidOf(it) > 0 ? "Оплачено частично" : "В работе"];
+  if (it.status === "paid")           return ["ok", "Оплачено"];
+  if (it.status === "sent")           return ["ok", it.needReceipt ? "Документ отправлен" : "Оплачено"];
+  return ["new", "Принята"];
+}
+
+// Шаги. Без платёжного документа их три, и заявка готова уже на «Оплачено».
+// Подписи шагов на телефоне прячутся — там вместо них строка словами.
+function stepsHtml(it) {
+  const labels = it.needReceipt ? ["Принята", "В работе", "Оплачено", "Документ"] : ["Принята", "В работе", "Оплачено"];
+  const stage = ({new:1, in_progress:2, paid:3, sent:4})[it.status] || 1;
+  const fullyDone = it.needReceipt ? it.status === "sent" : (it.status === "paid" || it.status === "sent");
+  const html = labels.map((lab, i) => {
+    const done = fullyDone || i + 1 < stage;
+    const now  = !done && i + 1 === stage;
+    return (i ? `<span class="c-bar${fullyDone || i < stage ? " done" : ""}"></span>` : "") +
+      `<span class="c-st"><span class="c-dot${done ? " done" : now ? " now" : ""}">${done ? SVG_CHECK : i + 1}</span>` +
+      `<span class="c-slab${done || now ? " on" : ""}">${lab}</span></span>`;
+  }).join("");
+
+  let words;
+  if (fullyDone) words = it.status === "sent" && it.needReceipt ? "Готово · документ отправлен" : "Готово · оплачено";
+  else {
+    const what = askOpen(it) && activeOpen(it) ? "бухгалтер ждёт вашего ответа"
+      : it.status === "new" ? "заявка принята, ждёт оплаты"
+      : it.status === "in_progress" ? (paidOf(it) > 0 ? "оплачена часть" : "бухгалтер взял платёж в работу")
+      : "платёж проведён, готовим документ";
+    words = `Шаг ${Math.min(stage, labels.length)} из ${labels.length} · ${what}`;
+  }
+  return `<div class="c-track">${html}</div>` +
+    `<div class="c-stepnow${fullyDone ? " ok" : ""}">${words}</div>`;
+}
+
+// Оплата по частям глазами клиента: сколько ушло, сколько осталось и до
+// какого числа, и документ на каждую часть. Слова — те же, что в Telegram
+// (notify-client), чтобы кабинет и сообщение не спорили. Кто из сотрудников
+// проводил часть, клиенту не нужно.
+function partsHtml(it) {
+  const parts = it.parts || [];
+  const paid = paidOf(it);
+  if (!parts.length && paid <= 0) return "";
+  const amount = Number(it.amount);
+  const rest = Math.max(cents(amount - paid), 0);
+  const over = cents(paid - amount);
+  const pct = amount > 0 ? Math.min(100, Math.round(paid / amount * 100)) : 100;
+
+  const right = activeOpen(it) && rest > 0
+    ? `Остаток <b class="num">${fmtMoney(rest)}</b> — оплатим до ${fmtDate(it.due)}`
+    : rest > 0 ? "Заявка закрыта"
+    : over > 0 ? `Переплата ${fmtMoney(over)}` : "Оплачено полностью";
+
+  const lines = parts.map(pt => {
+    const docs = (it.staffFiles || []).filter(f => f.part_id === pt.id);
+    return `<div class="c-part"><b class="num">${fmtMoney(pt.amount)}</b>` +
+      `<span>${pt.at ? fmtDate(isoLocal(new Date(pt.at))) : ""}</span>` +
+      (docs.length ? `<span class="c-files">${fileChips(docs, true)}</span>` : "") +
     `</div>`;
   }).join("");
 
-  return `<div class="cl-thread${waiting ? " ask" : ""}">` +
-    (waiting ? '<div class="cl-thread-h">❓ Бухгалтеру не хватает данных</div>' : "") +
+  return `<div class="c-parts${activeOpen(it) ? "" : " closed"}">` +
+    `<div class="c-parts-h"><span>Оплачено <b class="num">${fmtMoney(paid)}</b> из ${fmtMoney(amount)}</span><span>${right}</span></div>` +
+    `<div class="c-pbar"><i style="width:${pct}%"></i></div>` +
+    lines +
+  `</div>`;
+}
+
+// Переписка на карточке. Поле ответа живёт НЕ здесь, а в окне #clrBox вне
+// #list: список перерисовывается поллингом раз в 15 секунд, и набранный текст
+// вместе с кареткой исчез бы на середине слова.
+function threadHtml(it) {
+  const list = it.thread || [];
+  if (!list.length) return "";
+  const asking = askOpen(it);
+  const msgs = list.map((m, i) => {
+    const last = asking && i === list.length - 1;
+    const files = (m.files || []).filter(f => f && f.url);
+    return `<div class="c-msg ${m.who === "client" ? "me" : "st"}${last ? " q" : ""}">` +
+      `<span class="c-who">${m.who === "client" ? "Вы" : "Бухгалтер"}</span>` +
+      `<div class="c-text">${esc(m.text || "")}</div>` +
+      (files.length ? `<div class="c-files">${fileChips(files, false)}</div>` : "") +
+    `</div>`;
+  }).join("");
+
+  return `<div class="c-thread${asking ? " ask" : ""}">` +
+    `<div class="c-thread-h">${asking ? "❓ Бухгалтер спрашивает" : "Переписка с бухгалтером"}</div>` +
     msgs +
-    (waiting
-      ? `<button class="cl-answer" data-clreply="${esc(it.id)}">✍️ Ответить бухгалтеру</button>`
-      : "") +
+    (asking ? `<button class="c-b pri" data-clreply="${esc(it.id)}">Ответить бухгалтеру</button>` : "") +
   `</div>`;
 }
 
 function rowHtmlClient(it) {
   const done = it.status === "paid" || it.status === "sent";
-  const s = clStatusInfo(it);
-  const fileBadge = fileBadges(it);
-  const recBadge = it.recurrence !== "once" ? `<span class="badge b-rec">🔁 ${recLbl[it.recurrence]}</span>` : "";
-  // Пока заявка не взята в работу (status 'new') — клиент может её отредактировать.
-  // Кроме заведённых бухгалтером: их сервер править не даст (M2.3), и кнопка
-  // только обещала бы то, чего нет.
-  const editBtn = it.status === "new" && !it.createdByStaff
-    ? `<button class="ghost cl-edit" data-edit="${esc(it.id)}">✏️ Редактировать</button>`
-    : "";
-  // Повторить платёж можно с любой заявки, в том числе давно оплаченной —
-  // именно этого и просили: не вбивать одно и то же заново.
-  const dupBtn = `<button class="ghost cl-edit" data-dup="${esc(it.id)}">⧉ Повторить</button>`;
-  return `<div class="row b-${done ? "green" : "gray"}">` +
-    `<div class="main">` +
-      `<div class="head"><span class="payee">${esc(it.payee)}</span><span class="amount">${fmtMoney(it.amount)}</span></div>` +
-      `<div class="meta">` +
-        `<span>📅 ${fmtDate(it.due)}</span>` +
-        (it.purpose    ? `<span>${esc(it.purpose)}</span>`    : "") +
-        (it.requisites ? `<span>${esc(it.requisites)}</span>` : "") +
-      `</div>` +
-      `<div class="cl-status"><span class="cl-now ${s.cls}">${s.icon} ${s.text}</span>${recBadge}${fileBadge}${staffFileBadges(it)}${editBtn}${dupBtn}</div>` +
-      clSteps(it) +
-      clThreadHtml(it) +
+  const partial = activeOpen(it) && paidOf(it) > 0;
+  // Просрочку подсвечиваем только у непринятой в работу: взятая бухгалтером
+  // заявка уже в руках, и красная рамка клиента бы только пугала.
+  const late = it.status === "new" && it.due < todayStr();
+  const cls = done ? " done" : activeOpen(it) && askOpen(it) ? " ask" : late ? " late" : "";
+  const [pc, pt] = pillOf(it);
+
+  const when = partial
+    ? `Остаток до <b>${fmtDate(it.due)}</b>`
+    : `Дата платежа <b>${fmtDate(it.due)}</b>` + (late ? ' · <span class="late">просрочен</span>' : "");
+
+  const clientFiles = it.files || [];
+  const plainDocs = (it.staffFiles || []).filter(f => !f.part_id);
+  const files = clientFiles.length || plainDocs.length
+    ? `<div class="c-files">${fileChips(clientFiles, false)}${fileChips(plainDocs, true)}</div>` : "";
+
+  // «Исправить» — пока заявка не взята в работу, и не у заведённых
+  // бухгалтером: их сервер править не даст (M2.3), кнопка обещала бы то, чего
+  // нет. «Повторить» — с любой, в том числе давно оплаченной: именно этого и
+  // просили — не вбивать одно и то же заново.
+  const acts = [];
+  if (it.status === "new" && !it.createdByStaff)
+    acts.push(`<button class="c-b pri" data-edit="${esc(it.id)}">Исправить</button>`);
+  acts.push(`<button class="c-b" data-dup="${esc(it.id)}">Повторить платёж</button>`);
+
+  return `<article class="c-card${cls}">` +
+    `<div class="c-r1">` +
+      `<div class="c-who-col"><div class="c-nm">${esc(it.payee)}</div>` +
+        `<div class="c-meta"><span>${when}</span>` +
+          (recWord[it.recurrence] ? `<span>↻ ${recWord[it.recurrence]}</span>` : "") +
+          (it.requisites ? `<span>${esc(it.requisites)}</span>` : "") +
+        `</div></div>` +
+      `<div class="c-right"><span class="c-pill ${pc}">${pt}</span>` +
+        `<span class="c-amt num">${fmtMoney(it.amount)}</span></div>` +
     `</div>` +
-  `</div>`;
+    (it.purpose ? `<div class="c-purp">${esc(it.purpose)}</div>` : "") +
+    files +
+    partsHtml(it) +
+    stepsHtml(it) +
+    threadHtml(it) +
+    `<div class="c-acts">${acts.join("")}</div>` +
+  `</article>`;
 }
 
 // ---------- Окно ответа клиента ----------
@@ -333,9 +406,12 @@ export function renderClient() {
     // При активном фильтре обещание «здесь появятся ваши платежи» было бы
     // враньём: платежи есть, просто не попали под условие.
     list.innerHTML = (q || state.clFilter !== "all")
-      ? '<div class="empty">По этому запросу платежей нет.<br>' +
-        '<button class="linkbtn" id="clReset">Сбросить поиск и фильтр</button></div>'
-      : '<div class="empty">Здесь появятся ваши платежи после отправки заявки.</div>';
+      ? '<div class="c-empty"><b>По этому запросу платежей нет</b>' +
+        '<p>Платежи есть, просто не попали под поиск или фильтр.</p>' +
+        '<button class="c-b" id="clReset">Сбросить поиск и фильтр</button></div>'
+      : '<div class="c-empty"><b>Заявок пока нет</b>' +
+        '<p>Оставьте первое поручение — бухгалтер увидит его сразу.</p>' +
+        '<button class="c-b pri" id="clNew">Новая заявка</button></div>';
     return;
   }
   list.innerHTML = rows.map(rowHtmlClient).join("");

@@ -48,21 +48,35 @@ function startPoll() {
 
 // ---------- режим редактирования заявки (клиент) ----------
 
-function setFormMode(editing) {
-  const title = document.getElementById("formTitle");
-  const sub   = document.getElementById("formSub");
-  const btn   = document.querySelector("#payForm .submit");
-  if (editing) {
-    if (title) title.textContent = "Редактирование заявки";
+// Режим формы: "new" — новая заявка, "edit" — правка, "dup" — повтор прошлого
+// платежа (это тоже новая заявка, но с подставленными данными). Помним его,
+// чтобы после неудачной отправки вернуть те же подписи.
+let formMode = "new";
+
+function setFormMode(mode) {
+  formMode = mode;
+  const title  = document.getElementById("formTitle");
+  const sub    = document.getElementById("formSub");
+  const btn    = document.querySelector("#payForm .submit");
+  const cancel = document.getElementById("formCancel");
+  // из правки и повтора есть куда вернуться, ничего не отправляя
+  if (cancel) cancel.classList.toggle("hidden", mode === "new");
+  if (mode === "edit") {
+    if (title) title.textContent = state.TOKEN ? "Исправить заявку" : "Редактирование заявки";
     if (sub)   sub.textContent   = state.TOKEN
-      ? "Измените нужные поля и сохраните. Доступно, пока бухгалтер не взял заявку в работу."
+      ? "Бухгалтер ещё не взял её в работу — можно поправить что угодно."
       : "Измените нужные поля и сохраните. Если заявку оставлял клиент — он получит уведомление о правке.";
     if (btn)   btn.textContent   = "Сохранить изменения";
+    return;
+  }
+  if (mode === "dup" && state.TOKEN) {
+    if (title) title.textContent = "Повторить платёж";
+    if (sub)   sub.textContent   = "Данные подставлены из прошлого платежа — проверьте дату и сумму. Файлы не переносятся: к новому платежу нужен свой счёт.";
   } else {
     if (title) title.textContent = "Поручение на оплату";
     if (sub)   sub.textContent   = "Заполните поля — бухгалтер сразу увидит заявку в очереди со сроком. Так платёж не потеряется.";
-    if (btn)   btn.textContent   = "Отправить поручение";
   }
+  if (btn) btn.textContent = "Отправить поручение";
 }
 
 // ---------- прикреплённые файлы ----------
@@ -104,7 +118,7 @@ function fillFormForEdit(it) {
   document.getElementById("payForm").due.value = it.due || todayStr();
   state.editingId = it.id;
   state.editingDue = it.due || null;
-  setFormMode(true);
+  setFormMode("edit");
   updateDueHint();
   switchView("form");
 }
@@ -141,9 +155,10 @@ function fillFormForDuplicate(it) {
   // сотруднику подставляем того же клиента, иначе дубликат уедет в личные задачи
   const sel = document.getElementById("ncFormClient");
   if (sel && !state.TOKEN) sel.value = it.client_id || "";
-  setFormMode(false);
+  setFormMode("dup");
   switchView("form");
-  toast((it.files || []).length
+  // клиенту то же самое сказано подзаголовком формы
+  if (!state.TOKEN) toast((it.files || []).length
     ? "Данные скопированы. Проверьте дату и сумму, файл приложите заново"
     : "Данные скопированы — проверьте дату и сумму");
 }
@@ -158,7 +173,7 @@ function resetFormNew() {
   const dueEl = document.querySelector('input[name=due]');
   if (dueEl) dueEl.value = todayStr();
   if (state.TOKEN && state.clientInfo) f.client.value = state.clientInfo.name;
-  setFormMode(false);
+  setFormMode("new");
   updateDueHint();
 }
 
@@ -191,7 +206,7 @@ async function onSubmit(e) {
   const files = (state.formFiles || []).concat(uploaded);
   if (files.length > 10) {
     toast("Больше 10 файлов не приложить — уберите лишние");
-    submitBtn.disabled = false; setFormMode(wasEditing);
+    submitBtn.disabled = false; setFormMode(formMode);
     return;
   }
 
@@ -263,7 +278,7 @@ async function onSubmit(e) {
   } catch(err) {
     console.error(err);
     toast("Ошибка: " + (err.message || err));
-    submitBtn.disabled = false; setFormMode(wasEditing);
+    submitBtn.disabled = false; setFormMode(formMode);
     return;
   }
 
@@ -280,12 +295,16 @@ async function onSubmit(e) {
     const saved = state.items.find(x => String(x.id) === String(wasEditing ? editedId : newId));
     const realDue = saved && saved.due ? saved.due : sentDue;
     const moved = realDue !== sentDue ? " Рабочий день бухгалтерии уже закончился, поэтому дата перенесена." : "";
-    const ok = document.getElementById("okMsg");
-    ok.textContent = (wasEditing
-      ? "✓ Заявка обновлена. Платёж «" + sentPayee + "» на " + fmtDate(realDue) + " — актуальные данные в очереди."
-      : "✓ Поручение отправлено бухгалтеру. Платёж «" + sentPayee + "» на " + fmtDate(realDue) + " уже в очереди.") + moved;
-    ok.className = "ok-msg show";
-    setTimeout(() => { ok.className = "ok-msg"; }, 6000);
+    // Сообщение — над списком: человек уже там, форма скрыта.
+    const ok = document.getElementById("clOk");
+    ok.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>' +
+      "<span><b>" + (wasEditing ? "Заявка исправлена" : "Поручение отправлено") + "</b>" +
+      esc((wasEditing
+        ? "Платёж «" + sentPayee + "» на " + fmtDate(realDue) + " — бухгалтер видит изменения."
+        : "Платёж «" + sentPayee + "» на " + fmtDate(realDue) + " уже в очереди у бухгалтера.") + moved) + "</span>";
+    ok.classList.remove("hidden");
+    clearTimeout(state._clOkTimer);
+    state._clOkTimer = setTimeout(() => ok.classList.add("hidden"), 9000);
     switchView("queue");
     // Ниже обещаем «статус виден ниже» — под активным поиском или фильтром
     // «Оплаченные» свежая заявка в список бы не попала, и обещание бы соврало.
@@ -360,6 +379,11 @@ async function init() {
       renderClient();
       return;
     }
+    // «Новая заявка» из пустого кабинета — то же, что вкладка
+    if (state.TOKEN && e.target.closest && e.target.closest("#clNew")) {
+      document.getElementById("tabForm").click();
+      return;
+    }
 
     const find = attr => {
       const b = e.target.closest && e.target.closest(`button[${attr}]`);
@@ -401,6 +425,13 @@ async function init() {
   });
 
   document.getElementById("payForm").addEventListener("submit", onSubmit);
+
+  // «Отменить и вернуться к списку» (правка и повтор): форма очищается, чтобы
+  // вкладка «Новая заявка» у сотрудника не открылась с остатком правки
+  document.getElementById("formCancel").addEventListener("click", () => {
+    resetFormNew();
+    document.getElementById("tabQueue").click();
+  });
 
   // Поиск и фильтр в кабинете клиента. Отдельные элементы и отдельные
   // слушатели: тулбар бухгалтера ниже перерисовывает очередь через render(),
@@ -530,8 +561,6 @@ async function init() {
     document.getElementById("tabQueue").textContent = "Мои платежи";
     document.getElementById("tabForm").textContent  = "Новая заявка";
     document.getElementById("tabs").classList.remove("hidden");
-    const sub = document.querySelector(".brand p");
-    if (sub) sub.textContent = "Оставьте заявку — и следите за статусом каждого платежа";
 
     if (!useRemote) {
       document.getElementById("list").innerHTML =
@@ -553,8 +582,8 @@ async function init() {
     const ci = document.querySelector('input[name=client]');
     if (ci) { ci.value = clientName; ci.readOnly = true; }
 
-    const cn = document.getElementById("clientName");
-    if (cn) cn.textContent = clientName;
+    const firm = document.getElementById("firmName");
+    if (firm) { firm.textContent = clientName; firm.classList.remove("hidden"); }
 
     await loadPaymentsByToken(state.TOKEN);
     switchView(state.items.length ? "queue" : "form");
