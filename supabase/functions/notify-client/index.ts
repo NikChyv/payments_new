@@ -207,14 +207,14 @@ async function firmSuffix(telegramId: number, firm: unknown) {
 // человек: служебные флаги уведомлений сюда попадать не должны, иначе функция
 //сама себе устроит рассылку, проставив флаг после отправки.
 function diffLines(oldRec: Record<string, unknown>, rec: Record<string, unknown>,
-                   skipFiles = false): string[] {
+                   skipFiles = false, skipDue = false): string[] {
   const out: string[] = [];
   const pair = (label: string, a: string, b: string) => out.push(`• ${label}: ${esc(a)} → <b>${esc(b)}</b>`);
 
   if (oldRec.payee !== rec.payee) pair("Получатель", String(oldRec.payee ?? "—"), String(rec.payee ?? "—"));
   if (Number(oldRec.amount) !== Number(rec.amount))
     pair("Сумма", fmtMoney(Number(oldRec.amount ?? 0)), fmtMoney(Number(rec.amount ?? 0)));
-  if (oldRec.due !== rec.due) pair("Дата", fmtDate(String(oldRec.due ?? "")), fmtDate(String(rec.due ?? "")));
+  if (oldRec.due !== rec.due && !skipDue) pair("Дата", fmtDate(String(oldRec.due ?? "")), fmtDate(String(rec.due ?? "")));
   if (oldRec.requisites !== rec.requisites)
     pair("Реквизиты", String(oldRec.requisites || "—"), String(rec.requisites || "—"));
   if (oldRec.purpose !== rec.purpose)
@@ -404,7 +404,12 @@ serve(async (req) => {
     let flagField: "client_paid_notified" | "client_sent_notified" | null = null;
 
     if (rec.status === "paid" && old.status !== "paid" && !rec.client_paid_notified) {
-      text = `✅ Ваш платёж «${esc(rec.payee)}» на ${fmtMoney(Number(rec.amount))} оплачен.`
+      // «Закрыть с недоплатой» — тот же переход в paid, но оплачено меньше суммы:
+      // «оплачен на 1 000» было бы неправдой, клиент ждал бы, что ушло всё.
+      const paid = Number(rec.paid_amount ?? 0), amount = Number(rec.amount);
+      text = (paid > 0 && paid < amount
+               ? `✅ По заявке «${esc(rec.payee)}» оплачено ${fmtMoney(paid)} из ${fmtMoney(amount)}. Заявка закрыта.`
+               : `✅ Ваш платёж «${esc(rec.payee)}» на ${fmtMoney(amount)} оплачен.`)
            + (rec.need_receipt ? "\n📄 Готовим платёжный документ." : "");
       flagField = "client_paid_notified";
     } else if (rec.status === "sent" && old.status !== "sent" && !rec.client_sent_notified
@@ -431,6 +436,32 @@ serve(async (req) => {
       }
     }
 
+    // ---------- 1а. оплата частью ----------
+    // Клиента уведомляем о каждой части (решение 27.08). Счётчик — как у
+    // документов: не дошло сейчас (нет Telegram, сеть), допошлём при следующем
+    // касании заявки. Несколько неотправленных частей — одним сообщением.
+    //
+    // Финальную часть сюда не берём: она переводит заявку в paid, и про неё
+    // скажет ветка «оплачено» выше — одно действие, одно сообщение. Отмена части
+    // клиенту не сообщается (как и отмена оплаты), счётчик просто опускается,
+    // чтобы следующая часть снова дошла.
+    const parts: Array<{ amount?: number }> = Array.isArray(rec.parts) ? rec.parts : [];
+    const partsTold = Number(rec.client_parts_notified ?? 0);
+    if (parts.length < partsTold ||
+        (parts.length > partsTold && (rec.status === "paid" || rec.status === "sent"))) {
+      patch.client_parts_notified = parts.length;
+    } else if (parts.length > partsTold && clientTg) {
+      const fresh = parts.slice(partsTold).reduce((s, p) => s + Number(p?.amount ?? 0), 0);
+      const left = Math.max(Number(rec.amount) - Number(rec.paid_amount ?? 0), 0);
+      const partText = `💸 По заявке «${esc(rec.payee)}» оплачено ${fmtMoney(fresh)}.\n`
+                     + `Остаток ${fmtMoney(left)} — оплатим до ${fmtDate(String(rec.due))}.`
+                     + await firmSuffix(clientTg, rec.client);
+      if (await tg(clientTg, partText, undefined, "часть", rec.id)) {
+        patch.client_parts_notified = parts.length;
+        done.push("часть");
+      }
+    }
+
     // ---------- 2. правка заявки ----------
     // Направление определяет БД: last_edit_role проставляет триггер по JWT,
     // подделать его из браузера нельзя.
@@ -446,7 +477,11 @@ serve(async (req) => {
     const oldThread = Array.isArray(old.thread) ? old.thread as ThreadMsg[] : [];
     const clientReplied = thread.length > oldThread.length &&
       thread.slice(oldThread.length).some((m) => m && m.who === "client");
-    const changes = diffLines(old, rec, clientReplied);
+    // Та же история с оплатой частью: pay_part переносит срок на дату остатка
+    // и undo_part возвращает прежний — дата уже есть в сообщении о части, а
+    // «Бухгалтер изменил вашу заявку: Дата» вторым сообщением было бы дублем.
+    const partsMoved = Number(old.paid_amount ?? 0) !== Number(rec.paid_amount ?? 0);
+    const changes = diffLines(old, rec, clientReplied, partsMoved);
     if (changes.length) {
       // правил сотрудник → сообщаем клиенту, но только про ЕГО собственную заявку:
       // заявки, заведённые бухгалтером, клиент и так не редактирует

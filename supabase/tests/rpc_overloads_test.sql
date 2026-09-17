@@ -11,7 +11,7 @@
 -- разрешает вызов и с ним, и без него только пока версия одна.
 
 begin;
-select plan(8);
+select plan(10);
 
 create or replace function pg_temp.versions(p_name text) returns int
 language sql as $$
@@ -34,6 +34,10 @@ select is(pg_temp.versions('list_payments_by_token'), 1,
   'list_payments_by_token — одна версия');
 select is(pg_temp.versions('client_by_token'), 1,
   'client_by_token — одна версия');
+select is(pg_temp.versions('pay_part'), 1,
+  'pay_part — одна версия');
+select is(pg_temp.versions('undo_part'), 1,
+  'undo_part — одна версия');
 -- adjust_due_date перегружена намеренно: (date) и (date, timestamp) для
 -- тестируемости, без параметров по умолчанию — PostgREST их различает.
 select is(pg_temp.versions('adjust_due_date'), 2,

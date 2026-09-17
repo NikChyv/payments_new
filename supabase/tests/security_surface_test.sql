@@ -3,7 +3,7 @@
 -- Единственный путь для anon — SECURITY DEFINER функции по токену.
 
 begin;
-select plan(25);
+select plan(29);
 
 -- ---- RLS включён везде, где есть данные ----
 select ok((select relrowsecurity from pg_class where oid = 'public.payments'::regclass),
@@ -64,6 +64,16 @@ select ok(not has_function_privilege('anon', 'public.check_rate_limit(text,text,
           'anon не может крутить счётчики лимитов напрямую');
 select ok(has_function_privilege('authenticated', 'public.delete_client(uuid)', 'EXECUTE'),
           'вошедший сотрудник может вызвать delete_client (внутри — гейт is_admin)');
+
+-- Оплата по частям (20260917000002): только вошедший сотрудник
+select ok(not has_function_privilege('anon', 'public.pay_part(text,numeric,date,numeric)', 'EXECUTE'),
+          'anon не может записать часть оплаты');
+select ok(not has_function_privilege('anon', 'public.undo_part(text,text)', 'EXECUTE'),
+          'anon не может отменить часть оплаты');
+select ok(has_function_privilege('authenticated', 'public.pay_part(text,numeric,date,numeric)', 'EXECUTE'),
+          'сотрудник может записать часть оплаты');
+select ok(has_function_privilege('authenticated', 'public.undo_part(text,text)', 'EXECUTE'),
+          'сотрудник может отменить часть оплаты');
 
 -- ---- а путь клиента по токену обязан остаться открытым ----
 -- страховка от чрезмерного revoke: если закрыть эти функции, клиенты
