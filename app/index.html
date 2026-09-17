@@ -11,7 +11,8 @@
 <body>
 <header>
   <div class="wrap topbar">
-    <img class="logo" src="img/logo.png" width="38" height="38" alt="ITnimax">
+    <!-- логотип на белой плашке: шапка тёмно-синяя, а знак — того же цвета -->
+    <span class="plate"><img class="logo" src="img/logo.png" width="25" height="25" alt="ITnimax"></span>
     <div class="brand">
       <h1>Платежи ITnimax</h1>
       <p>Заявки на оплату — от клиента к бухгалтеру, без переписки</p>
@@ -28,25 +29,35 @@
   </div>
 </header>
 
+<!-- ===== ОЧЕРЕДЬ: главное число и вкладки =====
+     Полосы во всю ширину, поэтому стоят до <main class="wrap">. Видны только
+     на очереди сотрудника — переключает switchView(). Вкладки перерисовывает
+     render(); полей ввода здесь нет, поллинг ничего не сотрёт. -->
+<div id="qTop" class="hidden">
+  <div class="q-lead">
+    <div class="wrap">
+      <div class="q-l">
+        <span class="q-cap">К оплате сегодня</span>
+        <span class="q-big num" id="qBig">0,00<small>Br</small></span>
+        <span class="q-sub" id="qBigSub"></span>
+      </div>
+      <div class="q-kv" id="qKv"></div>
+    </div>
+  </div>
+  <div class="q-filters"><div class="wrap" id="qFilters"></div></div>
+</div>
+
 <main class="wrap">
 
   <!-- ===== QUEUE (accountant) ===== -->
   <section id="view-queue">
-    <div class="banner" id="banner"></div>
-
-    <div class="cards">
-      <div class="scard red" data-filter="overdue"><div class="n" id="cOverdue">0</div><div class="l">Просрочено</div></div>
-      <div class="scard orange" data-filter="today"><div class="n" id="cToday">0</div><div class="l">На сегодня</div></div>
-      <div class="scard gray" data-filter="week"><div class="n" id="cWeek">0</div><div class="l">Ближайшие 7 дней</div></div>
-      <div class="scard blue" data-filter="prog"><div class="n" id="cProg">0</div><div class="l">В работе</div></div>
-      <div class="scard slate" data-filter="waiting"><div class="n" id="cWait">0</div><div class="l">Ждут ответа</div></div>
-      <div class="scard purple" data-filter="await_doc"><div class="n" id="cDoc">0</div><div class="l">Отправить документ</div></div>
-    </div>
-
-    <div class="toolbar">
-      <input type="text" id="search" placeholder="Поиск: клиент, получатель, назначение…">
-      <select id="fClient"><option value="">Все клиенты</option></select>
-      <select id="fStatus">
+    <div class="q-tools staff-only">
+      <label class="q-search">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+        <input type="search" id="search" autocomplete="off" placeholder="Поиск: клиент, получатель, назначение, реквизиты…" aria-label="Поиск по заявкам">
+      </label>
+      <select id="fClient" aria-label="Фильтр по клиенту"><option value="">Все клиенты</option></select>
+      <select id="fStatus" aria-label="Фильтр по статусу">
         <option value="active">Активные (не закрытые)</option>
         <option value="all">Все статусы</option>
         <option value="new">Новые</option>
@@ -55,10 +66,8 @@
         <option value="await_doc">Отправить платёжный документ</option>
         <option value="sent">Документ отправлен</option>
       </select>
-      <button class="ghost" id="clearFilter">Сбросить</button>
+      <button class="q-clear" id="clearFilter">Сбросить</button>
     </div>
-
-    <div class="filter-hint" id="filterHint"></div>
 
     <div id="clientHead" class="client-only">
       <div class="mylist-top">
@@ -92,7 +101,18 @@
       </div>
     </div>
 
-    <div id="list"></div>
+    <!-- Таблица очереди. #list общий с кабинетом клиента: там рамка таблицы и
+         заголовок колонок гасятся стилями body.client-mode. -->
+    <div class="q-sheet">
+      <div class="q-hrow staff-only" aria-hidden="true">
+        <div>Клиент</div><div>Получатель</div><div>Назначение</div><div>Срок</div><div class="r">Сумма, Br</div><div class="r">Действие</div>
+      </div>
+      <div id="list"></div>
+    </div>
+    <div class="q-foot staff-only">
+      <span id="qFoot"></span>
+      <span>Рабочий день пн–пт до 17:00 · Europe/Minsk</span>
+    </div>
   </section>
 
   <!-- ===== FORM (client) ===== -->
@@ -232,6 +252,50 @@
       <button class="btn soft th-act hidden" data-th="remind" id="thRemind">🔔 Напомнить</button>
       <button class="btn soft" data-th="close">Закрыть</button>
       <button class="btn p th-act" data-th="send" id="thSend">Отправить вопрос</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== МЕНЮ «…» СТРОКИ ОЧЕРЕДИ =====
+     Вне #list: поллинг перерисовывает список, а меню должно пережить это.
+     Кнопки несут статус и оплаченное из момента, когда меню открыли, —
+     по ним запись проверяет, не тронули ли заявку. -->
+<div class="q-menu hidden" id="qMenu" role="menu"></div>
+
+<!-- ===== ОПЛАТА ЧАСТЬЮ (бухгалтер) =====
+     Вводится ОПЛАЧЕННАЯ сумма, остаток считается сам: перед глазами у
+     бухгалтера платёжка, которую он только что сделал. Сумма и дата остатка
+     пишутся одним вызовом pay_part — иначе клиент получил бы два уведомления
+     подряд: «прошла часть» и «бухгалтер изменил дату». -->
+<div id="partBox" class="ovl hidden">
+  <div class="ovl-card pp-card" role="dialog" aria-modal="true" aria-labelledby="ppTitle">
+    <div class="ovl-head">
+      <div>
+        <div class="ovl-title" id="ppTitle">Оплатить часть</div>
+        <div class="ovl-sub" id="ppSub">—</div>
+      </div>
+    </div>
+
+    <div class="pp-sum"><span>Остаток по заявке</span><b class="num" id="ppRest">—</b></div>
+
+    <div class="fg">
+      <label for="ppAmt">Сколько заплатили сейчас, Br</label>
+      <input id="ppAmt" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00">
+      <div class="pp-chips" id="ppChips"></div>
+    </div>
+
+    <!-- прячется, когда сумма закрывает остаток целиком: дата тогда не нужна -->
+    <div class="fg" id="ppDueBox">
+      <label for="ppDue">Когда планируем остаток</label>
+      <input id="ppDue" type="date">
+      <div class="hint">Заявка останется в очереди с этой датой. Выходной база не примет, «сегодня» после 17:00 сдвинется на следующий рабочий день.</div>
+    </div>
+
+    <div class="th-warn hidden" id="ppWarn"></div>
+
+    <div class="ovl-btns">
+      <button class="btn soft" data-pp="close">Отмена</button>
+      <button class="btn p" data-pp="save" id="ppSave">Записать</button>
     </div>
   </div>
 </div>

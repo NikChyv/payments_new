@@ -15,7 +15,8 @@
 //   node tools/uicheck.mjs --serve      # просто держать стенд для ручного прохода
 //
 // Экраны: кабинет клиента, окно ответа клиента, форма клиента, вход, очередь
-// («нужно сейчас» и «все статусы»), окно переписки, форма сотрудника, «Клиенты».
+// («нужно сегодня» и «все статусы»), раскрытая строка с частями, меню «…»,
+// окно «Оплатить часть», окно переписки, форма сотрудника, «Клиенты».
 // Перед съёмкой в локальную базу кладётся фикстура — заявки `ui-*` во всех
 // статусах, с перепиской и файлами. Два прогона подряд дают побайтно одинаковые
 // снимки, поэтому правку, которая не должна менять вид, проверяем `cmp` старых и
@@ -54,6 +55,8 @@ async function fixture(staffId) {
     author: STAFF.name, files: [], at: "2026-09-15T08:30:00Z" };
   const ans = { id: "ui-m2", who: "client", kind: "reply", text: "Прикладываю счёт.",
     author: ROM.client, files: [file("schet.pdf")], at: "2026-09-15T09:10:00Z" };
+  const part = (id, amount, before, after) => ({ id, amount, at: "2026-09-15T10:00:00Z", by: staffId,
+    by_name: STAFF.name, due_before: before, due_after: after });
   const rows = [
     { id: "ui-1", ...ROM, payee: "ЧУП «Связьинвест»", amount: 312.4, requisites: "УНП 190000001",
       due: day(0), recurrence: "once", purpose: "Связь за сентябрь", status: "in_progress", thread: [ask] },
@@ -67,6 +70,16 @@ async function fixture(staffId) {
       due: day(-1), recurrence: "once", purpose: "Личная задача", status: "new", created_by_staff: staffId },
     { id: "ui-5", ...SMI, payee: "УП «Минскводоканал»", amount: 210.9, requisites: "УНП 100000003",
       due: day(3), recurrence: "monthly", purpose: "Вода", status: "in_progress", created_by_staff: staffId },
+    // Оплата по частям (шаг 5): частично оплаченная с документом на часть и
+    // закрытая с недоплатой. Service-ключ сторож частей пропускает, но
+    // инвариант «оплачено = сумма частей» держит и для него.
+    { id: "ui-6", ...SMI, payee: "ООО «Профснаб»", amount: 500, requisites: "счёт 2211/3",
+      due: day(0), recurrence: "monthly", purpose: "Расходные материалы", status: "in_progress",
+      paid_amount: 200, parts: [part("ui-p1", 200, day(-2), day(0))],
+      staff_files: [{ ...file("platezhka-1.pdf"), part_id: "ui-p1" }] },
+    { id: "ui-7", ...SMI, payee: "ИП Ковалёв", amount: 800, requisites: "УНП 190000004",
+      due: day(-1), recurrence: "once", purpose: "Аренда склада", status: "paid", need_receipt: true,
+      paid_amount: 650, parts: [part("ui-p2", 400, day(-6), day(-3)), part("ui-p3", 250, day(-3), day(-1))] },
   ];
   for (const row of rows) {   // по одной: пакетная вставка требует одинаковых ключей
     const r = await fetch(`${API}/rest/v1/payments`, { method: "POST",
@@ -159,13 +172,24 @@ try {
     await c.auth.signInWithPassword({email:${JSON.stringify(STAFF.email)}, password:${JSON.stringify(STAFF.password)}});
   })()`);
   await go(base, 3200);                     await shot("queue");
-  // по умолчанию очередь показывает только «нужно сейчас» — оплаченные и
+  // по умолчанию очередь показывает только «нужно сегодня» — оплаченные и
   // закрытые строки со своими стилями видны лишь во «всех статусах»
-  await click("#showAllBtn");
+  await click('#qFilters button[data-f=""]');
   await ev(`(() => { const s = document.getElementById('fStatus'); s.value = 'all';
     s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`); await sleep(700);
   await shot("queueall");
-  await click('.row[data-id="ui-2"] button[data-act="thread"]'); await shot("thread");
+  // раскрытая строка с частями, меню «…» и окно части
+  await click('.qr[data-id="ui-6"] .q-c-payee');                 await shot("qdet");
+  // Меню не снимаем: снимок во всю высоту меняет размер окна, а меню по resize
+  // закрывается (так и задумано). Проверяем его пункты текстом.
+  await click('.qr[data-id="ui-6"] button[data-menu]', 400);
+  const menu = await ev(`[...document.querySelectorAll('#qMenu button')].map(b => b.textContent).join(" | ")`);
+  console.log(`  меню «…»  ${menu || "—"}`);
+  if (!menu) problems.push("UICHECK: меню «…» не открылось");
+  await click('#qMenu button[data-act="part"]');                  await shot("part");
+  await ev(`document.querySelector('#partBox button[data-pp="close"]').click()`);
+  await click('.qr[data-id="ui-2"] button[data-menu]', 400);
+  await click('#qMenu button[data-act="thread"]');                await shot("thread");
   await go(base, 3200);
   await click("#tabForm");                  await shot("form");
   await click("#tabClients", 1500);         await shot("clients");

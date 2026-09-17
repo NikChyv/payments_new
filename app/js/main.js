@@ -5,7 +5,7 @@ import { esc, toast, genId } from './utils.js';
 import { onLoggedIn, doLogin, doLogout } from './auth.js';
 import { addClient, refreshClients, rotateClientToken, deleteClientById, renderClients, saveClientEdit } from './clients.js';
 import { exportClientPayments } from './export.js';
-import { render, onListClick } from './queue.js';
+import { render, onListClick, initQueue } from './queue.js';
 import {
   loadClientByToken, loadPaymentsByToken, submitPaymentByToken, editPaymentByToken, renderClient,
   resetClientFilter, openClientReply, initClientReply,
@@ -19,6 +19,8 @@ function switchView(v) {
   document.getElementById("view-form").classList.toggle("hidden",  v !== "form");
   document.getElementById("view-login").classList.toggle("hidden", v !== "login");
   document.getElementById("view-clients").classList.toggle("hidden", v !== "clients");
+  // главное число и вкладки очереди — полосы вне <main>, прячем вместе с ней
+  document.getElementById("qTop").classList.toggle("hidden", v !== "queue" || !!state.TOKEN);
   document.getElementById("tabQueue").classList.toggle("active", v === "queue");
   document.getElementById("tabForm").classList.toggle("active",  v === "form");
   const tc = document.getElementById("tabClients");
@@ -325,6 +327,7 @@ async function init() {
   // Окна переписки статичны, а заявка внутри меняется — вешаем по одному разу.
   initThreadDialog();
   initClientReply();
+  initQueue();
 
   document.getElementById("tabQueue").addEventListener("click", () => {
     switchView("queue");
@@ -347,7 +350,10 @@ async function init() {
     }
   });
 
-  document.getElementById("list").addEventListener("click", e => {
+  // Один обработчик на список и на меню «…» очереди: меню лежит вне #list
+  // (поллинг), а «Редактировать» и «Дублировать» в нём те же, что в раскрытой
+  // строке.
+  const onListArea = e => {
     // сброс поиска/фильтра из пустого состояния клиентского кабинета
     if (state.TOKEN && e.target.closest && e.target.closest("#clReset")) {
       resetClientFilter();
@@ -379,7 +385,9 @@ async function init() {
     }
 
     if (!state.TOKEN) onListClick(e); // сотрудник управляет статусами
-  });
+  };
+  document.getElementById("list").addEventListener("click", onListArea);
+  document.getElementById("qMenu").addEventListener("click", onListArea);
 
   // выбранные файлы показываем сразу, чтобы человек видел, что приложилось
   const fileInput = document.getElementById("fileInput");
@@ -424,44 +432,14 @@ async function init() {
   document.getElementById("fClient").addEventListener("change", render);
   document.getElementById("fStatus").addEventListener("change", render);
 
-  // подсветка карточек под текущий быстрый фильтр («due» = две карточки сразу)
-  function syncCards() {
-    document.querySelectorAll(".scard").forEach(c => {
-      const f = c.getAttribute("data-filter");
-      const on = state.quickFilter === "due"
-        ? (f === "overdue" || f === "today")
-        : state.quickFilter === f;
-      c.classList.toggle("sel", on);
-    });
-  }
-  syncCards();
-
-  // «Показать все платежи» в подсказке
-  document.getElementById("filterHint").addEventListener("click", e => {
-    if (!e.target.closest("#showAllBtn")) return;
-    state.quickFilter = "";
-    syncCards();
-    render();
-  });
-
+  // «Сбросить» возвращает очередь к стартовому виду — «Нужно сегодня»
   document.getElementById("clearFilter").addEventListener("click", () => {
-    state.quickFilter = "";
+    state.quickFilter = "due";
+    state.openId = null;
     document.getElementById("search").value = "";
     document.getElementById("fClient").value = "";
     document.getElementById("fStatus").value = "active";
-    syncCards();
     render();
-  });
-
-  document.querySelectorAll(".scard").forEach(card => {
-    card.addEventListener("click", () => {
-      const f = card.getAttribute("data-filter");
-      const on = state.quickFilter !== f;
-      state.quickFilter = on ? f : "";
-      syncCards();
-      document.getElementById("fStatus").value = (on && f === "await_doc") ? "all" : "active";
-      render();
-    });
   });
 
   document.getElementById("loginBtn").addEventListener("click", async () => {

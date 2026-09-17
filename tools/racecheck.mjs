@@ -69,8 +69,8 @@ try {
   // Берём любую заявку, которую очередь показывает с кнопкой «Взять в работу»:
   // так тест не привязан к конкретной строке сида.
   const id = await ev(`(() => {
-    const b = document.querySelector('.row[data-id] button[data-act="take"]');
-    return b ? b.closest('.row').getAttribute('data-id') : null;
+    const b = document.querySelector('.qr[data-id] button[data-act="take"]');
+    return b ? b.closest('.qr').getAttribute('data-id') : null;
   })()`);
   if (!id) throw new Error("в очереди нет ни одной новой заявки — нечего проверять");
 
@@ -117,7 +117,7 @@ try {
   let clicked = false;
   for (let attempt = 0; attempt < 3 && !clicked; attempt++) {
     clicked = await ev(`(() => {
-      const b = document.querySelector('.row[data-id="${id}"] button[data-act="take"]');
+      const b = document.querySelector('.qr[data-id="${id}"] button[data-act="take"]');
       if (!b) return false;
       b.click();
       return true;

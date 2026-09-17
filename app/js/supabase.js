@@ -55,6 +55,11 @@ export function fromRow(r) {
     lastEditAt: r.last_edit_at || null,
     staffFiles: Array.isArray(r.staff_files) ? r.staff_files : [],
     thread: Array.isArray(r.thread) ? r.thread : [],
+    // Оплата по частям. Только читаем: в toRow этих полей нет и быть не
+    // должно — сторож в базе отвергнет любой update, где они меняются мимо
+    // pay_part / undo_part, и вместе с ними пропала бы вся запись.
+    parts: Array.isArray(r.parts) ? r.parts : [],
+    paidAmount: Number(r.paid_amount) || 0,
   };
 }
 
@@ -160,11 +165,17 @@ function replaceLocal(it, fresh) {
 //
 // Возвращает {ok:true} либо {ok:false, current} — current это то, что в базе
 // сейчас, или null, если заявку удалили.
-export async function changeStatusRemote(it, from, to) {
+//
+// `seenPaid` — сколько было оплачено на экране. Передаётся там, где от этого
+// зависит смысл перехода: «Оплачено», «Закрыть с недоплатой», отмена оплаты.
+// Без него отставшая вкладка закрыла бы заявку, по которой только что прошла
+// часть, как целую — или целую как недоплаченную.
+export async function changeStatusRemote(it, from, to, seenPaid) {
   if (!useRemote) { it.status = to; _saveLocal(); return {ok: true}; }
 
-  const res = await sb.from(TABLE).update({status: to})
-    .eq("id", it.id).eq("status", from).select();
+  let q = sb.from(TABLE).update({status: to}).eq("id", it.id).eq("status", from);
+  if (seenPaid !== undefined) q = q.eq("paid_amount", seenPaid);
+  const res = await q.select();
   if (res.error) throw res.error;
 
   if (!res.data || !res.data.length) {
@@ -205,6 +216,54 @@ export async function attachDocRemote(it, from) {
   }
   Object.assign(it, fromRow(res.data[0]));
   return {ok: true};
+}
+
+// Документ на часть оплаты. Статус не меняется — заявка ещё в работе или уже
+// оплачена, а закрывает её отдельное действие. Условие — всё, что человек
+// видел: статус, оплаченное и сам набор документов. Иначе параллельная
+// вкладка, приложившая свой файл, потеряла бы его под нашей записью.
+export async function attachPartDocRemote(it, seen, files) {
+  if (!useRemote) { it.staffFiles = files; _saveLocal(); return {ok: true}; }
+
+  const res = await sb.from(TABLE).update({staff_files: files})
+    .eq("id", it.id).eq("status", seen.status).eq("paid_amount", seen.paid)
+    .eq("staff_files", JSON.stringify(seen.staffFiles))
+    .select();
+  if (res.error) throw res.error;
+
+  if (!res.data || !res.data.length) {
+    const fresh = await refetch(it.id);
+    replaceLocal(it, fresh);
+    return {ok: false, current: fresh};
+  }
+  Object.assign(it, fromRow(res.data[0]));
+  return {ok: true};
+}
+
+// Часть оплаты и её отмена — только через RPC: части и оплаченную сумму
+// база больше никому не даёт менять (сторож guard_payment_parts). Проверка
+// «заявку тем временем изменили» — внутри функций, по p_seen_paid и id
+// последней части. Отказ приходит исключением с человеческим текстом —
+// его и показываем. После любого исхода заявку перечитываем: RPC вернула
+// только числа, а на экране нужна вся строка.
+async function partRpc(it, name, args) {
+  const res = await sb.rpc(name, args);
+  // не перечиталось (сеть) — оставляем как было, поллинг догонит; перечиталось
+  // пустым — заявку удалили, убираем с экрана
+  let fresh = null, fetched = false;
+  try { fresh = await refetch(it.id); fetched = true; } catch (e) { console.error(e); }
+  if (fetched) replaceLocal(it, fresh);
+  if (res.error) return {ok: false, message: res.error.message, current: fresh};
+  return {ok: true, result: res.data};
+}
+
+export function payPartRemote(it, amount, newDue, seenPaid) {
+  return partRpc(it, "pay_part",
+    {p_id: it.id, p_amount: amount, p_new_due: newDue || null, p_seen_paid: seenPaid});
+}
+
+export function undoPartRemote(it, partId) {
+  return partRpc(it, "undo_part", {p_id: it.id, p_part_id: partId});
 }
 
 // Новая заявка — insert одной строки вместо upsert всей очереди.
@@ -302,11 +361,14 @@ export async function removeRemote(idv) {
 // Удаление автокопии при отмене оплаты — только нетронутой. Условие проверяет
 // база, а не вкладка: пока бухгалтер смотрел на экран, клиент мог приложить
 // счёт к копии или поправить её. Возвращает false, если копию уже тронули.
+// paid_amount = 0 — отдельно: часть, закрывшая заявку целиком, дату не
+// меняет и last_edit_at не ставит, так что копия с оплатой выглядела бы
+// нетронутой.
 export async function removeUntouchedCopyRemote(idv) {
   if (!useRemote) { _saveLocal(); return true; }
   const res = await sb.from(TABLE).delete()
     .eq("id", idv).eq("status", "new").is("last_edit_at", null)
-    .eq("files", "[]").eq("thread", "[]")
+    .eq("files", "[]").eq("thread", "[]").eq("paid_amount", 0)
     .select("id");
   if (res.error) throw res.error;
   return !!(res.data && res.data.length);

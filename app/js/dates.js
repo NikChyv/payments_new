@@ -34,6 +34,20 @@ export function fmtDate(dateStr) {
   return d.getDate() + " " + m[d.getMonth()] + " " + d.getFullYear();
 }
 
+// Без года — для колонки срока в очереди: год там почти всегда текущий, а
+// место в узкой колонке нужно под «просрочено N дн.»
+export function fmtDateShort(dateStr) {
+  const d = new Date(dateStr + "T00:00:00");
+  const m = ["янв","фев","мар","апр","мая","июн","июл","авг","сен","окт","ноя","дек"];
+  const y = d.getFullYear() !== new Date().getFullYear() ? " " + d.getFullYear() : "";
+  return d.getDate() + " " + m[d.getMonth()] + y;
+}
+
+// Число без «Br» — в таблице валюта стоит в заголовке колонки.
+export function fmtNum(v) {
+  return Number(v).toLocaleString("ru-RU", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+
 export function fmtMoney(v) {
   return Number(v).toLocaleString("ru-RU", {minimumFractionDigits: 2, maximumFractionDigits: 2}) + " Br";
 }

@@ -296,7 +296,7 @@ serve(async (req) => {
     // ---------- 0. платёжный документ от бухгалтера ----------
     // Стоит первой намеренно: прикрепление документа приходит сюда как обычный
     // UPDATE от сотрудника, а diffLines про staff_files не знает.
-    const docs: Array<{ url?: string; name?: string }> = Array.isArray(rec.staff_files) ? rec.staff_files : [];
+    const docs: Array<{ url?: string; name?: string; part_id?: string }> = Array.isArray(rec.staff_files) ? rec.staff_files : [];
     const alreadySent = Number(rec.client_docs_notified ?? 0);
     const fresh = docs.slice(alreadySent).filter((d) => d && d.url);
 
@@ -304,7 +304,14 @@ serve(async (req) => {
       // Подпись только у первого файла — иначе один и тот же текст повторится
       // под каждым вложением. Пишем её так, чтобы пересылка поставщику была
       // самодостаточной: из сообщения понятно, что за платёж и что он прошёл.
-      const caption = `✅ Платёж «${esc(rec.payee)}» на ${fmtMoney(Number(rec.amount))} оплачен.`
+      // Документ на часть оплаты (part_id) — про сумму части, а не всей заявки:
+      // «платёж на 500 оплачен» под платёжкой на 200 поставщик прочтёт как
+      // полную оплату.
+      const parts: Array<{ id?: string; amount?: number }> = Array.isArray(rec.parts) ? rec.parts : [];
+      const part = fresh[0].part_id ? parts.find((p) => p?.id === fresh[0].part_id) : undefined;
+      const caption = (part
+          ? `✅ По платежу «${esc(rec.payee)}» оплачена часть: ${fmtMoney(Number(part.amount ?? 0))}.`
+          : `✅ Платёж «${esc(rec.payee)}» на ${fmtMoney(Number(rec.amount))} оплачен.`)
         + `\n📄 Во вложении — платёжный документ.`
         + await firmSuffix(clientTg, rec.client);
 
@@ -318,8 +325,10 @@ serve(async (req) => {
 
       if (sent > 0) {
         patch.client_docs_notified = alreadySent + sent;
-        // документ ушёл — текстовое «документ отправлен» теперь только дублировало бы
-        patch.client_sent_notified = true;
+        // Документ ушёл — текстовое «документ отправлен» теперь только
+        // дублировало бы. Но не документ на часть: заявка ещё открыта, и если
+        // потом её закроют без файла, клиент так и не узнал бы о закрытии.
+        if (fresh.slice(0, sent).some((d) => !d.part_id)) patch.client_sent_notified = true;
         done.push("документ");
       }
     }
