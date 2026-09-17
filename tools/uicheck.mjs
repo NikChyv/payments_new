@@ -14,19 +14,66 @@
 //   node tools/uicheck.mjs --out .      # куда класть снимки
 //   node tools/uicheck.mjs --serve      # просто держать стенд для ручного прохода
 //
+// Экраны: кабинет клиента, окно ответа клиента, форма клиента, вход, очередь
+// («нужно сейчас» и «все статусы»), окно переписки, форма сотрудника, «Клиенты».
+// Перед съёмкой в локальную базу кладётся фикстура — заявки `ui-*` во всех
+// статусах, с перепиской и файлами. Два прогона подряд дают побайтно одинаковые
+// снимки, поэтому правку, которая не должна менять вид, проверяем `cmp` старых и
+// новых PNG (эталон снимать в тот же день: даты в сиде относительные).
+//
 // Гонку двух вкладок проверяет соседний tools/racecheck.mjs.
 // Общий стенд обоих — tools/stand.mjs.
 
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { API, ANON, STAFF, TOKEN, arg, sleep, serve, ensureStaff, cdp, launchChrome } from "./stand.mjs";
+import { API, ANON, SRV, STAFF, TOKEN, arg, sleep, serve, ensureStaff, cdp, launchChrome } from "./stand.mjs";
 
 const WIDTH = Number(arg("width", 1280));
 const OUT   = arg("out", path.join(os.tmpdir(), "uicheck"));
 
 const server = await serve();
-await ensureStaff();
+const staffId = await ensureStaff();
+await fixture(staffId);
+
+// Сид — три новые заявки, и на снимках не было ни одного другого статуса, ни
+// переписки, ни вложений: сверка «до/после» (редизайн, шаг 1) такие стили просто
+// не видела. Докладываем заявки во всех состояниях. Id с префиксом `ui-`, каждый
+// прогон пересоздаются; время в переписке фиксированное, чтобы снимки двух
+// прогонов совпадали. Пишем service-ключом только в локальный стек — вебхуков
+// уведомлений там нет.
+async function fixture(staffId) {
+  const h = { apikey: SRV, Authorization: `Bearer ${SRV}`, "Content-Type": "application/json" };
+  await fetch(`${API}/rest/v1/payments?id=like.ui-*`, { method: "DELETE", headers: h });
+  const day = (n) => { const d = new Date(); d.setDate(d.getDate() + n);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+  const ROM = { client_id: "11111111-0000-0000-0000-000000000001", client: "ООО «Ромашка»" };
+  const SMI = { client_id: "11111111-0000-0000-0000-000000000002", client: "ИП Смирнов" };
+  const file = (name) => ({ url: `http://127.0.0.1:18321/storage/v1/object/public/files/${name}`, name });
+  const ask = { id: "ui-m1", who: "staff", kind: "ask", text: "Пришлите, пожалуйста, счёт — в заявке его нет.",
+    author: STAFF.name, files: [], at: "2026-09-15T08:30:00Z" };
+  const ans = { id: "ui-m2", who: "client", kind: "reply", text: "Прикладываю счёт.",
+    author: ROM.client, files: [file("schet.pdf")], at: "2026-09-15T09:10:00Z" };
+  const rows = [
+    { id: "ui-1", ...ROM, payee: "ЧУП «Связьинвест»", amount: 312.4, requisites: "УНП 190000001",
+      due: day(0), recurrence: "once", purpose: "Связь за сентябрь", status: "in_progress", thread: [ask] },
+    { id: "ui-2", ...ROM, payee: "ОАО «Белтелеком»", amount: 96.15, requisites: "счёт 4471",
+      due: day(-2), recurrence: "monthly", purpose: "Интернет", status: "paid",
+      files: [file("schet.pdf")], file_url: file("schet.pdf").url, file_name: "schet.pdf",
+      staff_files: [file("platezhka.pdf")], thread: [ask, ans] },
+    { id: "ui-3", ...ROM, payee: "ООО «Канцторг»", amount: 1480, requisites: "УНП 190000002",
+      due: day(-5), recurrence: "once", purpose: "Бумага и картриджи", status: "sent" },
+    { id: "ui-4", client_id: null, client: null, payee: "Сверка с ФСЗН", amount: 1,
+      due: day(-1), recurrence: "once", purpose: "Личная задача", status: "new", created_by_staff: staffId },
+    { id: "ui-5", ...SMI, payee: "УП «Минскводоканал»", amount: 210.9, requisites: "УНП 100000003",
+      due: day(3), recurrence: "monthly", purpose: "Вода", status: "in_progress", created_by_staff: staffId },
+  ];
+  for (const row of rows) {   // по одной: пакетная вставка требует одинаковых ключей
+    const r = await fetch(`${API}/rest/v1/payments`, { method: "POST",
+      headers: { ...h, Prefer: "return=minimal" }, body: JSON.stringify(row) });
+    if (!r.ok) throw new Error(`фикстура uicheck (${row.id}) не записалась: ` + await r.text());
+  }
+}
 
 // --serve: не снимать ничего, просто держать стенд открытым для ручного прохода.
 // Учётка бухгалтера к этому моменту уже заведена, клиенты к ней привязаны.
@@ -84,15 +131,32 @@ try {
 
   console.log(`Снимки (${WIDTH}px):`);
 
+  const click = async (sel, settle = 700) => {
+    const ok = await ev(`(() => { const b = document.querySelector(${JSON.stringify(sel)}); if (b) b.click(); return !!b; })()`);
+    if (!ok) problems.push(`UICHECK: не нашёл ${sel} — снимок будет не тем экраном`);
+    await sleep(settle);
+  };
+
   await go(`${base}?t=${TOKEN}`);          await shot("client");
-  await go(base);
+  await click("button[data-clreply]");     await shot("reply");
+  await go(`${base}?t=${TOKEN}`);
+  await click("#tabForm");                 await shot("clform");
+  await go(base);                           await shot("login");
   await ev(`(async () => {
     const c = window.supabase.createClient(${JSON.stringify(API)}, ${JSON.stringify(ANON)});
     await c.auth.signInWithPassword({email:${JSON.stringify(STAFF.email)}, password:${JSON.stringify(STAFF.password)}});
   })()`);
   await go(base, 3200);                     await shot("queue");
-  await ev(`document.getElementById('tabForm')?.click(); true`); await sleep(700);
-  await shot("form");
+  // по умолчанию очередь показывает только «нужно сейчас» — оплаченные и
+  // закрытые строки со своими стилями видны лишь во «всех статусах»
+  await click("#showAllBtn");
+  await ev(`(() => { const s = document.getElementById('fStatus'); s.value = 'all';
+    s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`); await sleep(700);
+  await shot("queueall");
+  await click('.row[data-id="ui-2"] button[data-act="thread"]'); await shot("thread");
+  await go(base, 3200);
+  await click("#tabForm");                  await shot("form");
+  await click("#tabClients", 1500);         await shot("clients");
 
   console.log(problems.length ? "\nОшибки в консоли:" : "\nОшибок в консоли нет.");
   [...new Set(problems)].forEach((p) => console.log("  " + p));
