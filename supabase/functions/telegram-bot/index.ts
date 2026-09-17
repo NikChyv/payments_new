@@ -188,14 +188,21 @@ function manyFirms(list: ClientRow[]) {
 // только когда фирм несколько: у остальных он был бы лишним шумом.
 async function sendPayments(chatId: number, list: ClientRow[]) {
   const { data: items } = await sb.from("payments")
-    .select("payee,amount,due,status,client_id")
+    .select("payee,amount,paid_amount,due,status,client_id")
     .in("client_id", list.map((c) => c.id))
     .in("status", ["new", "in_progress"]).order("due");
 
   if (!items || items.length === 0) { await send(chatId, "Активных платежей нет. 🎉"); return; }
 
+  // При частичной оплате — остаток, как в уведомлении «оплачено X, остаток Y»:
+  // минуту назад бот сказал «остаток 300», и полная сумма здесь спорила бы с ним.
+  const amountText = (it: any) => {
+    const paid = Number(it.paid_amount ?? 0);
+    const rest = Math.max(Math.round((Number(it.amount) - paid) * 100) / 100, 0);
+    return paid > 0 ? `остаток ${fmtMoney(rest)} из ${fmtMoney(Number(it.amount))}` : fmtMoney(it.amount);
+  };
   const line = (it: any, i: number) =>
-    `${i + 1}. <b>${esc(it.payee)}</b> — ${fmtMoney(it.amount)}\n   📅 ${fmtDate(it.due)} · ${statusLabel(it.status)}`;
+    `${i + 1}. <b>${esc(it.payee)}</b> — ${amountText(it)}\n   📅 ${fmtDate(it.due)} · ${statusLabel(it.status)}`;
 
   if (list.length === 1) {
     await send(chatId, `<b>Ваши платежи (${esc(list[0].name)})</b>\n\n` + items.map(line).join("\n\n"));

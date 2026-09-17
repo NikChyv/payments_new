@@ -265,6 +265,16 @@ async function partRpc(it, name, args) {
   try { fresh = await refetch(it.id); fetched = true; } catch (e) { console.error(e); }
   if (fetched) replaceLocal(it, fresh);
   if (res.error) return {ok: false, message: res.error.message, current: fresh};
+  // Записалось, но перечитать не вышло: берём итог из ответа самой функции.
+  // Иначе заявка осталась бы «в работе» на экране, а вызывающий по её статусу
+  // решает, создавать ли копию повторяющегося, — и копия молча не появилась бы.
+  if (!fetched && res.data) {
+    const d = res.data;
+    if (d.status) it.status = d.status;
+    if (d.paid_amount != null) it.paidAmount = Number(d.paid_amount);
+    if (d.due) it.due = d.due;
+    if (d.part) it.parts = (it.parts || []).concat([d.part]);
+  }
   return {ok: true, result: res.data};
 }
 
