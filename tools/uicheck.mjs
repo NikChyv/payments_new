@@ -110,6 +110,18 @@ try {
     fs.writeFileSync(f, Buffer.from(r.data, "base64"));
     const wide = await ev(`document.documentElement.scrollWidth`);
     console.log(`  ${name.padEnd(8)} ${f}${wide > WIDTH ? `  ⚠ страница шире окна: ${wide}px` : ""}`);
+    // Битый путь к woff2 не даёт ни ошибки на экране, ни пустой страницы —
+    // она тихо рисуется запасным шрифтом. Поэтому спрашиваем браузер, какой
+    // шрифт у body и загрузились ли ВСЕ его файлы: у семейства их несколько
+    // (кириллица, латиница), и загруженная латиница не значит, что русский
+    // текст не в запасном шрифте.
+    const font = await ev(`document.fonts.ready.then(() => {
+      const fam = getComputedStyle(document.body).fontFamily.split(",")[0].replace(/["']/g, "").trim();
+      const faces = [...document.fonts].filter(f => f.family.replace(/["']/g, "") === fam);
+      return { fam, loaded: faces.some(f => f.status === "loaded"), failed: faces.filter(f => f.status === "error").length };
+    })`);
+    if (font && (!font.loaded || font.failed))
+      problems.push(`FONT: ${name} — «${font.fam}»: ${font.failed ? font.failed + " файл(а) не загрузилось" : "не загрузился"}, текст в запасном шрифте`);
     // Само число ничего не чинит: нужно знать, ЧТО распирает. Ищем видимые
     // элементы, вылезающие за правый край, и печатаем самые внешние.
     if (wide > WIDTH) {
