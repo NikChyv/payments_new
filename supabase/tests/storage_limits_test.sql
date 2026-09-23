@@ -6,7 +6,7 @@
 -- панели: локально и в CI это сразу покраснеет.
 
 begin;
-select plan(13);
+select plan(14);
 
 -- ---- сам бакет ----
 select ok((select exists(select 1 from storage.buckets where id = 'files')),
@@ -33,6 +33,9 @@ select ok((select 'image/jpeg' = any(allowed_mime_types) from storage.buckets wh
 
 select ok((select 'application/pdf' = any(allowed_mime_types) from storage.buckets where id = 'files'),
           'счёт в pdf принимается');
+
+select ok((select 'application/rtf' = any(allowed_mime_types) from storage.buckets where id = 'files'),
+          'платёжка в rtf принимается — банк-клиент выгружает поручение в rtf');
 
 -- Обратная страховка: список ценен ровно тем, чего в нём нет. Тип, под которым
 -- браузер выполнит содержимое, не должен попасть в него ни при каком расширении.

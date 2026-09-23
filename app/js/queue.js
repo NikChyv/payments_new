@@ -170,10 +170,15 @@ export function render() {
   // «Повторить» и «Редактировать».
   const rows = state.items.filter(it =>
     (!fc || it.client === fc) && passStatus(it, fs) && passQuick(it, state.quickFilter) && passSearch(it, q));
+  // Открытые — по сроку, ближайшее дело сверху. Закрытые — наоборот, свежие
+  // сверху, как «Сначала новые» в кабинете клиента: на «Все статусы» иначе
+  // сразу под открытыми шли платежи полугодовой давности, а вчерашний — в
+  // самом низу списка из двухсот.
   rows.sort((a, b) => {
     const ao = activeOpen(a) ? 0 : 1, bo = activeOpen(b) ? 0 : 1;
     if (ao !== bo) return ao - bo;
-    return a.due < b.due ? -1 : a.due > b.due ? 1 : 0;
+    const byDue = a.due < b.due ? -1 : a.due > b.due ? 1 : 0;
+    return ao === 0 ? byDue : -byDue;
   });
 
   document.getElementById("list").innerHTML = rows.length ? rows.map(rowHtml).join("") : emptyHtml();
@@ -635,7 +640,7 @@ function pickFiles(onPicked) {
   input.type = "file";
   input.multiple = true;
   // те же типы, что принимает бакет: список живёт в supabase.js и в миграции
-  input.accept = ".jpg,.jpeg,.png,.heic,.heif,.webp,.pdf,.xlsx,.docx,.xls,.doc";
+  input.accept = ".jpg,.jpeg,.png,.heic,.heif,.webp,.pdf,.xlsx,.docx,.xls,.doc,.rtf";
   input.style.display = "none";
   document.body.appendChild(input);
   input.onchange = () => {

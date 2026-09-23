@@ -314,6 +314,7 @@ const MIME_BY_EXT = {
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   xls: "application/vnd.ms-excel",
   doc: "application/msword",
+  rtf: "application/rtf",  // платёжки из банк-клиента
 };
 const fileExt = file => (file.name.split(".").pop() || "").toLowerCase();
 

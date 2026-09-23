@@ -235,6 +235,7 @@ const MIME_BY_EXT: Record<string, string> = {
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   xls:  "application/vnd.ms-excel",
   doc:  "application/msword",
+  rtf:  "application/rtf",
 };
 const ALLOWED_MIME = new Set(Object.values(MIME_BY_EXT));
 
