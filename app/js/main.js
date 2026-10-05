@@ -1,7 +1,7 @@
 import { useRemote, sb, load, uploadFiles, updateContentRemote, insertPaymentRemote } from './supabase.js';
 import { state } from './state.js';
 import { todayStr, fmtDate, workingDueFor, fmtDateDow } from './dates.js';
-import { esc, toast, genId } from './utils.js';
+import { esc, toast, genId, docPayee, isDocPayee } from './utils.js';
 import { onLoggedIn, doLogin, doLogout } from './auth.js';
 import { PERSONAL, addClient, refreshClients, rotateClientToken, deleteClientById, renderClients, saveClientEdit, exportPreview } from './clients.js';
 import { exportClientPayments } from './export.js';
@@ -75,7 +75,7 @@ function setFormMode(mode) {
     if (sub)   sub.textContent   = "Данные подставлены из прошлого платежа — проверьте дату и сумму. Файлы не переносятся: к новому платежу нужен свой счёт.";
   } else {
     if (title) title.textContent = "Поручение на оплату";
-    if (sub)   sub.textContent   = "Заполните поля — бухгалтер сразу увидит заявку в очереди со сроком. Так платёж не потеряется.";
+    if (sub)   sub.textContent   = "Заполните поля — бухгалтер сразу увидит заявку в очереди со сроком. Или просто приложите счёт: получателя, сумму и дату тогда можно не заполнять.";
   }
   if (btn) btn.textContent = "Отправить поручение";
 }
@@ -83,12 +83,28 @@ function setFormMode(mode) {
 // ---------- прикреплённые файлы ----------
 // state.formFiles — то, что уже загружено (при правке и дубликате). Выбранное
 // в поле «файл» добавится к этому списку при отправке.
+// С приложенным документом получатель, сумма и дата необязательны: всё это
+// написано в счёте, и клиент не должен перепечатывать его руками (решение
+// 05.10). Без файла — обязательны, как раньше. Настоящая проверка — в базе
+// (validate_payment_fields); здесь форма только перестаёт требовать лишнее.
+function syncRequired(hasFiles) {
+  const f = document.getElementById("payForm");
+  if (!f) return;
+  ["payee", "amount", "due"].forEach(n => { f[n].required = !hasFiles; });
+  f.classList.toggle("doc-mode", hasFiles);
+  const note = document.getElementById("docNote");
+  if (note) note.textContent = hasFiles
+    ? "Документ приложен — получателя, сумму и дату можно не заполнять: бухгалтер возьмёт их из документа."
+    : "Приложите счёт — тогда получателя, сумму и дату можно не заполнять.";
+}
+
 function renderFormFiles() {
   const box = document.getElementById("fileList");
   if (!box) return;
   const kept = state.formFiles || [];
   const input = document.getElementById("fileInput");
   const picked = input ? Array.from(input.files || []) : [];
+  syncRequired(kept.length + picked.length > 0);
 
   if (!kept.length && !picked.length) { box.innerHTML = ""; return; }
 
@@ -152,6 +168,8 @@ function updateDueHint() {
 // повторного платежа она почти всегда другая, а старая только путала бы.
 function fillFormForDuplicate(it) {
   fillFormFields(it);
+  // «По документу: счёт.pdf» — имя прошлого файла, а файлы в повтор не идут
+  if (isDocPayee(it.payee)) document.getElementById("payForm").payee.value = "";
   document.getElementById("payForm").due.value = todayStr();
   state.editingId = null;
   state.editingDue = null;
@@ -254,15 +272,34 @@ async function onSubmit(e) {
     return;
   }
 
+  // Без документа получатель, сумма и дата обязательны. Форма это проверяет
+  // сама, но только пока файл выбран: если он не загрузился (не тот тип,
+  // больше 10 МБ), заявка осталась бы и без документа, и без данных.
+  let payee = f.payee.value.trim();
+  const amount = parseFloat(f.amount.value) || null;
+  let due = f.due.value || null;
+  if (!files.length && (!payee || amount == null || !due)) {
+    toast((fileInput.files.length ? "Файл не приложился. " : "") +
+      "Без документа нужны получатель, сумма и дата — заполните их или приложите другой файл");
+    fileInput.value = "";
+    renderFormFiles();
+    submitBtn.disabled = false; setFormMode(formMode);
+    return;
+  }
+  if (!payee) payee = docPayee(files);
+  // клиенту дату ставит сервер (ближайший рабочий день); запись сотрудника
+  // идёт мимо RPC, поэтому считаем здесь тем же правилом
+  if (!due && !state.TOKEN) due = workingDueFor(todayStr());
+
   try {
     if (state.TOKEN && state.editingId) {
       // Фича 2: редактирование своей заявки (пока status='new')
       await editPaymentByToken(
         state.TOKEN, state.editingId,
-        f.payee.value.trim(),
-        parseFloat(f.amount.value) || 0,
+        payee,
+        amount,
         f.requisites.value.trim(),
-        f.due.value,
+        due,
         f.recurrence.value,
         f.purpose.value.trim(),
         f.needReceipt.checked,
@@ -272,10 +309,10 @@ async function onSubmit(e) {
       // Шаг 7: через RPC submit_payment — заявка сама привязывается к клиенту и бухгалтеру
       newId = await submitPaymentByToken(
         state.TOKEN,
-        f.payee.value.trim(),
-        parseFloat(f.amount.value) || 0,
+        payee,
+        amount,
         f.requisites.value.trim(),
-        f.due.value,
+        due,
         f.recurrence.value,
         f.purpose.value.trim(),
         f.needReceipt.checked,
@@ -289,10 +326,10 @@ async function onSubmit(e) {
       // базы, а не то, что набрано в форме.
       const draft = {
         ...it,
-        payee:       f.payee.value.trim(),
-        amount:      parseFloat(f.amount.value) || 0,
+        payee,
+        amount,
         requisites:  f.requisites.value.trim(),
-        due:         f.due.value,
+        due,
         recurrence:  f.recurrence.value,
         purpose:     f.purpose.value.trim(),
         needReceipt: f.needReceipt.checked,
@@ -320,9 +357,9 @@ async function onSubmit(e) {
                                              : f.client.value.trim()),
         client_id: picked ? picked.id : null,
         createdByStaff: state.currentStaffId || null,
-        payee: f.payee.value.trim(),
-        amount: parseFloat(f.amount.value) || 0, requisites: f.requisites.value.trim(),
-        due: f.due.value, recurrence: f.recurrence.value, purpose: f.purpose.value.trim(),
+        payee,
+        amount, requisites: f.requisites.value.trim(),
+        due, recurrence: f.recurrence.value, purpose: f.purpose.value.trim(),
         status: "new", needReceipt: f.needReceipt.checked, files, created: todayStr(),
       };
       // insert одной строки вместо upsert всей очереди: заводя новую заявку,
@@ -339,8 +376,8 @@ async function onSubmit(e) {
 
   submitBtn.disabled = false;
 
-  const sentPayee = f.payee.value.trim();
-  const sentDue   = f.due.value;
+  const sentPayee = payee;
+  const sentDue   = due;
 
   if (state.TOKEN) {
     resetFormNew(); // сбрасывает editingId, форму, метку кнопки, имя клиента
@@ -349,7 +386,7 @@ async function onSubmit(e) {
     // (M2.4), и сообщение с выбранной датой соврало бы.
     const saved = state.items.find(x => String(x.id) === String(wasEditing ? editedId : newId));
     const realDue = saved && saved.due ? saved.due : sentDue;
-    const moved = realDue !== sentDue ? " Рабочий день бухгалтерии уже закончился, поэтому дата перенесена." : "";
+    const moved = sentDue && realDue !== sentDue ? " Рабочий день бухгалтерии уже закончился, поэтому дата перенесена." : "";
     // Сообщение — над списком: человек уже там, форма скрыта.
     const ok = document.getElementById("clOk");
     ok.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>' +

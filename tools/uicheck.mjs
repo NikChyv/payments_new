@@ -89,6 +89,11 @@ async function fixture(staffId) {
     { id: "ui-9", ...ROM, payee: "ИП Лапицкий", amount: 300, requisites: "счёт 118",
       due: day(-3), recurrence: "once", purpose: "Ремонт принтера", status: "paid",
       paid_amount: 250, parts: [part("ui-p5", 250, day(-3), day(-3))] },
+    // Заявка «по документу» (05.10): клиент приложил счёт и не заполнил
+    // получателя и сумму. Суммы нет — на снимках должно быть «в документе».
+    { id: "ui-10", ...ROM, payee: "По документу: schet-0418.pdf", amount: null,
+      due: day(2), recurrence: "once", status: "new",
+      files: [file("schet-0418.pdf")], file_url: file("schet-0418.pdf").url, file_name: "schet-0418.pdf" },
   ];
   for (const row of rows) {   // по одной: пакетная вставка требует одинаковых ключей
     const r = await fetch(`${API}/rest/v1/payments`, { method: "POST",

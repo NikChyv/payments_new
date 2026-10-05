@@ -1,6 +1,6 @@
 import { state } from './state.js';
 import { postStaffMessage } from './supabase.js';
-import { esc, safeUrl, toast } from './utils.js';
+import { esc, safeUrl, toast, hasAmount } from './utils.js';
 import { fmtDate, fmtMoney } from './dates.js';
 import { ico } from './icons.js';
 
@@ -94,7 +94,8 @@ export function openThread(it, onChange) {
   const rest = Math.max(Math.round((Number(it.amount) - paid) * 100) / 100, 0);
   const partial = paid > 0 && rest > 0 && !closed && it.status !== "paid";
   document.getElementById("thPayee").textContent = it.payee || "—";
-  document.getElementById("thAmount").textContent = fmtMoney(partial ? rest : it.amount);
+  document.getElementById("thAmount").textContent =
+    hasAmount(it) ? fmtMoney(partial ? rest : it.amount) : "сумма в документе";
   document.getElementById("thMeta").textContent =
     `${it.client || "личная задача"} · срок ${fmtDate(it.due)}` +
     (partial ? ` · остаток, оплачено ${fmtMoney(paid)} из ${fmtMoney(it.amount)}` : "") +

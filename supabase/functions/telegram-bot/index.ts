@@ -197,6 +197,8 @@ async function sendPayments(chatId: number, list: ClientRow[]) {
   // При частичной оплате — остаток, как в уведомлении «оплачено X, остаток Y»:
   // минуту назад бот сказал «остаток 300», и полная сумма здесь спорила бы с ним.
   const amountText = (it: any) => {
+    // заявка с сайта могла прийти без суммы — с приложенным документом
+    if (it.amount == null) return "сумма в документе";
     const paid = Number(it.paid_amount ?? 0);
     const rest = Math.max(Math.round((Number(it.amount) - paid) * 100) / 100, 0);
     return paid > 0 ? `остаток ${fmtMoney(rest)} из ${fmtMoney(Number(it.amount))}` : fmtMoney(it.amount);

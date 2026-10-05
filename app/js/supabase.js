@@ -44,7 +44,7 @@ export function fromRow(r) {
     files = [{url: r.file_url || null, name: r.file_name || "файл"}];
   }
   return {
-    id: r.id, client: r.client, payee: r.payee, amount: Number(r.amount),
+    id: r.id, client: r.client, payee: r.payee, amount: r.amount == null ? null : Number(r.amount),
     requisites: r.requisites || "", due: r.due, recurrence: r.recurrence,
     purpose: r.purpose || "", status: r.status, needReceipt: !!r.need_receipt,
     files,

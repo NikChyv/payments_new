@@ -123,7 +123,8 @@ serve(async (req) => {
       ``,
       `👤 Клиент: ${esc(record.client || "—")}`,
       `💳 Кому: ${esc(record.payee || "—")}`,
-      `💰 Сумма: ${fmtMoney(Number(record.amount || 0))}`,
+      // суммы может не быть: с приложенным документом она необязательна (05.10)
+      `💰 Сумма: ${record.amount == null ? "в документе" : fmtMoney(Number(record.amount))}`,
       `📅 Срок: ${record.due ? fmtDate(record.due) : "—"}`,
       record.purpose    ? `📝 ${esc(record.purpose)}`    : null,
       record.requisites ? `🔢 ${esc(record.requisites)}` : null,

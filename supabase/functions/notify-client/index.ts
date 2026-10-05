@@ -49,6 +49,14 @@ type ThreadMsg = {
 function fmtMoney(v: number) {
   return Number(v).toLocaleString("ru-RU", {minimumFractionDigits: 2, maximumFractionDigits: 2}) + " Br";
 }
+// Суммы у заявки может не быть (NULL): клиент приложил документ и не стал её
+// перепечатывать (миграция 20261005000001). «0,00 Br» в сообщении клиенту было
+// бы неправдой — говорим, где сумма, или не называем её вовсе.
+const hasAmount = (r: Record<string, unknown>) => r.amount != null;
+const amountOrDoc = (r: Record<string, unknown>) =>
+  hasAmount(r) ? fmtMoney(Number(r.amount)) : "сумма в документе";
+const onAmount = (r: Record<string, unknown>) =>
+  hasAmount(r) ? ` на ${fmtMoney(Number(r.amount))}` : "";
 function fmtDate(iso: string) {
   if (!iso) return "—";
   const [y, m, d] = String(iso).split("-");
@@ -212,8 +220,9 @@ function diffLines(oldRec: Record<string, unknown>, rec: Record<string, unknown>
   const pair = (label: string, a: string, b: string) => out.push(`• ${label}: ${esc(a)} → <b>${esc(b)}</b>`);
 
   if (oldRec.payee !== rec.payee) pair("Получатель", String(oldRec.payee ?? "—"), String(rec.payee ?? "—"));
-  if (Number(oldRec.amount) !== Number(rec.amount))
-    pair("Сумма", fmtMoney(Number(oldRec.amount ?? 0)), fmtMoney(Number(rec.amount ?? 0)));
+  if (hasAmount(oldRec) !== hasAmount(rec) || Number(oldRec.amount) !== Number(rec.amount))
+    pair("Сумма", hasAmount(oldRec) ? fmtMoney(Number(oldRec.amount)) : "не указана",
+                  hasAmount(rec)    ? fmtMoney(Number(rec.amount))    : "не указана");
   if (oldRec.due !== rec.due && !skipDue) pair("Дата", fmtDate(String(oldRec.due ?? "")), fmtDate(String(rec.due ?? "")));
   if (oldRec.requisites !== rec.requisites)
     pair("Реквизиты", String(oldRec.requisites || "—"), String(rec.requisites || "—"));
@@ -311,7 +320,7 @@ serve(async (req) => {
       const part = fresh[0].part_id ? parts.find((p) => p?.id === fresh[0].part_id) : undefined;
       const caption = (part
           ? `✅ По платежу «${esc(rec.payee)}» оплачена часть: ${fmtMoney(Number(part.amount ?? 0))}.`
-          : `✅ Платёж «${esc(rec.payee)}» на ${fmtMoney(Number(rec.amount))} оплачен.`)
+          : `✅ Платёж «${esc(rec.payee)}»${onAmount(rec)} оплачен.`)
         + `\n📄 Во вложении — платёжный документ.`
         + await firmSuffix(clientTg, rec.client);
 
@@ -358,7 +367,7 @@ serve(async (req) => {
           // Пока же он виден ему в кабинете, туда сообщение попало сразу.
           if (clientTg) {
             const suffix = await firmSuffix(clientTg, rec.client);
-            const card = `💳 ${esc(rec.payee)} · ${fmtMoney(Number(rec.amount))} · ${fmtDate(String(rec.due))}`;
+            const card = `💳 ${esc(rec.payee)} · ${amountOrDoc(rec)} · ${fmtDate(String(rec.due))}`;
             let i = fromClient;
             for (; i < thread.length; i++) {
               const m = thread[i];
@@ -380,7 +389,7 @@ serve(async (req) => {
         const replyChats = hasForStaff ? await getStaffChats("переписка → бухгалтерам") : [];
         if (hasForStaff && replyChats.length) {
           const card = `👤 ${esc(rec.client)}\n`
-                     + `💳 ${esc(rec.payee)} · ${fmtMoney(Number(rec.amount))} · ${fmtDate(String(rec.due))}`;
+                     + `💳 ${esc(rec.payee)} · ${amountOrDoc(rec)} · ${fmtDate(String(rec.due))}`;
           let i = fromStaff;
           for (; i < thread.length; i++) {
             const m = thread[i];
@@ -418,7 +427,7 @@ serve(async (req) => {
       const paid = Number(rec.paid_amount ?? 0), amount = Number(rec.amount);
       text = (paid > 0 && paid < amount
                ? `✅ По заявке «${esc(rec.payee)}» оплачено ${fmtMoney(paid)} из ${fmtMoney(amount)}. Заявка закрыта.`
-               : `✅ Ваш платёж «${esc(rec.payee)}» на ${fmtMoney(amount)} оплачен.`)
+               : `✅ Ваш платёж «${esc(rec.payee)}»${onAmount(rec)} оплачен.`)
            + (rec.need_receipt ? "\n📄 Готовим платёжный документ." : "");
       flagField = "client_paid_notified";
     } else if (rec.status === "sent" && old.status !== "sent" && !rec.client_sent_notified
@@ -506,7 +515,7 @@ serve(async (req) => {
         if (editChats.length) {
           const head = `✏️ <b>Клиент изменил заявку</b>\n\n`
                      + `👤 ${esc(rec.client)}\n`
-                     + `💳 ${esc(rec.payee)} · ${fmtMoney(Number(rec.amount))} · ${fmtDate(String(rec.due))}\n\n`;
+                     + `💳 ${esc(rec.payee)} · ${amountOrDoc(rec)} · ${fmtDate(String(rec.due))}\n\n`;
           await Promise.all(editChats.map((chat) =>
             tg(chat, head + changes.join("\n"), undefined, "правка → бухгалтерам", rec.id)));
           done.push("правка");

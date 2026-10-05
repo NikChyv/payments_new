@@ -145,13 +145,13 @@
       </div>
 
       <div class="fg">
-        <label>Кому платим (получатель) <span class="req">*</span></label>
+        <label>Кому платим (получатель) <span class="req doc-opt">*</span></label>
         <input name="payee" required maxlength="200" placeholder="Название контрагента">
       </div>
 
       <div class="two">
         <div class="fg">
-          <label>Сумма, Br <span class="req">*</span></label>
+          <label>Сумма, Br <span class="req doc-opt">*</span></label>
           <input name="amount" type="number" min="1" step="0.01" required placeholder="0,00">
         </div>
         <div class="fg">
@@ -162,7 +162,7 @@
 
       <div class="two">
         <div class="fg">
-          <label>Дата платежа <span class="req">*</span></label>
+          <label>Дата платежа <span class="req doc-opt">*</span></label>
           <input name="due" type="date" required>
           <!-- «сегодня» после 17:00 или в выходной сервер перенесёт: говорим заранее (M2.4) -->
           <div class="hint hidden" id="dueHint"></div>
@@ -193,6 +193,8 @@
           <span>Фото, PDF, Word или Excel · до 10 МБ на файл · до 10 файлов</span>
         </label>
         <div class="file-list" id="fileList"></div>
+        <!-- с документом получатель, сумма и дата необязательны (05.10) -->
+        <div class="hint" id="docNote">Приложите счёт — тогда получателя, сумму и дату можно не заполнять.</div>
       </div>
 
       <label class="check">

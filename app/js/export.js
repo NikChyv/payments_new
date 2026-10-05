@@ -7,7 +7,7 @@
 
 import { state } from './state.js';
 import { isoLocal, fmtDate } from './dates.js';
-import { toast } from './utils.js';
+import { toast, hasAmount } from './utils.js';
 import { buildXlsx, downloadBlob } from './xlsx.js';
 import { recLbl, stLbl, restOf, activeOpen } from './queue.js';
 
@@ -85,7 +85,7 @@ export function exportClientPayments(clientId, from, to) {
   const rows = items.map(it => [
     it.due,
     it.payee || "",
-    Number(it.amount) || 0,
+    hasAmount(it) ? Number(it.amount) || 0 : null,
     it.purpose || "",
     it.requisites || "",
     recLbl[it.recurrence] || "",

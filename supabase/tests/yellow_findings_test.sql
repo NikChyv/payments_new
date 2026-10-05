@@ -32,8 +32,8 @@ insert into clients (id, name, token, staff_id) values
 -- ===========================================================================
 select throws_ok(
   $$ select submit_payment('tokY1','Получатель',0,'U',current_date,'once','p',false,null,null) $$,
-  'P0001', 'Сумма должна быть больше нуля',
-  'клиент не заводит заявку на ноль');
+  'P0001', 'Укажите сумму или приложите документ',
+  'клиент не заводит заявку на ноль: без документа ноль — это «сумма не указана»');
 select throws_ok(
   $$ select submit_payment('tokY1','Получатель',-5000,'U',current_date,'once','p',false,null,null) $$,
   'P0001', 'Сумма должна быть больше нуля',
@@ -44,7 +44,7 @@ select throws_ok(
   'получатель в 201 символ не пролезает — уведомление не упрётся в лимит Telegram');
 select throws_ok(
   $$ select submit_payment('tokY1','   ',100,'U',current_date,'once','p',false,null,null) $$,
-  'P0001', 'Укажите получателя',
+  'P0001', 'Укажите получателя или приложите документ',
   'получатель из одних пробелов — не получатель');
 select throws_ok(
   $$ select submit_payment('tokY1','Получатель',100,'U',current_date,'once',repeat('я',1001),false,null,null) $$,

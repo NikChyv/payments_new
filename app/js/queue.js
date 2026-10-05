@@ -4,7 +4,7 @@ import { daysBetween, addDays, addMonths, fmtDate, fmtDateShort, fmtNum, fmtMone
 import { removeRemote, uploadFiles, changeStatusRemote, attachDocRemote, attachPartDocRemote,
          insertPaymentRemote, postStaffMessage, removeUntouchedCopyRemote,
          payPartRemote, undoPartRemote } from './supabase.js';
-import { esc, safeUrl, toast, genId } from './utils.js';
+import { esc, safeUrl, toast, genId, hasAmount } from './utils.js';
 import { threadState, threadHtml, openThread } from './thread.js';
 
 // Очередь бухгалтера — направление B «Выписка» (редизайн, шаг 5): таблица,
@@ -244,7 +244,7 @@ function statusActions(it, ts) {
   if (activeOpen(it)) {
     a.push(["pay", p ? "Остаток оплачен" : "Отметить оплаченной"]);
     // платят кусками заметно реже, чем целиком, — поэтому здесь, а не в строке
-    a.push(["part", p ? "Оплатить ещё часть…" : "Оплатить часть…"]);
+    if (hasAmount(it)) a.push(["part", p ? "Оплатить ещё часть…" : "Оплатить часть…"]);
     if (hasParts(it)) a.push(["unpart", "Отменить последнюю часть"]);
     if (p)            a.push(["close_under", "Закрыть с недоплатой"]);
   }
@@ -296,9 +296,12 @@ function rowHtml(it) {
 
   // Крупно — то, что понесут в банк: у открытой заявки остаток. Полная сумма
   // и оплаченное — строкой мельче, это справка, а не действие.
+  // Суммы нет — клиент приложил документ вместо неё: число не выдумываем.
   const amt = activeOpen(it) ? restOf(it) : it.amount;
-  const amtSub = paidOf(it) > 0
+  const amtSub = paidOf(it) > 0 && hasAmount(it)
     ? `<span class="q-rest">оплачено ${fmtNum(paidOf(it))} из ${fmtNum(it.amount)}</span>` : "";
+  const amtCell = hasAmount(it) ? fmtNum(amt) + amtSub
+    : `<span class="q-noamt" title="Клиент приложил документ и не указал сумму">в документе</span>`;
 
   let h = `<div class="qr${u.k ? " u-" + u.k : ""}${open ? " open" : ""}" data-id="${esc(it.id)}" tabindex="0" aria-expanded="${open}">` +
     `<div class="q-c-cli"><div class="q-cli">${cli}</div></div>` +
@@ -306,7 +309,7 @@ function rowHtml(it) {
       (it.requisites ? `<div class="q-req">${esc(it.requisites)}</div>` : "") + `</div>` +
     `<div class="q-c-purp"><div class="q-purp${it.purpose ? "" : " mut"}">${esc(it.purpose) || "не указано"}</div></div>` +
     `<div class="q-c-due q-due ${u.k}"><b class="num">${fmtDateShort(it.due)}${rec}</b><span>${u.lbl}</span></div>` +
-    `<div class="q-c-amt r q-amt${activeOpen(it) ? "" : " done"} num">${fmtNum(amt)}${amtSub}</div>` +
+    `<div class="q-c-amt r q-amt${activeOpen(it) ? "" : " done"} num">${amtCell}</div>` +
     `<div class="q-acts">` +
       (p ? `<button class="q-go ${p.c}" data-act="${p.a}"${seen}${p.title ? ` title="${p.title}"` : ""}>${p.t}</button>` : "") +
       `<button class="q-more" data-menu="${esc(it.id)}" aria-label="Ещё действия" aria-haspopup="menu">${DOTS}</button>` +
@@ -358,7 +361,7 @@ function detHtml(it, ts, seen) {
     `<div><div class="q-dk">Реквизиты</div><div class="q-dv${it.requisites ? "" : " mut"}">${esc(it.requisites) || "не указаны"}</div></div>` +
     `<div><div class="q-dk">Срок и периодичность</div><div class="q-dv">${fmtDate(it.due)} · ${recLbl[it.recurrence] || "—"}</div></div>` +
     `<div><div class="q-dk">Документ после оплаты</div><div class="q-dv${it.needReceipt ? "" : " mut"}">${it.needReceipt ? "нужен клиенту" : "не нужен"}</div></div>` +
-    `<div><div class="q-dk">Сумма заявки</div><div class="q-dv num">${fmtMoney(it.amount)}</div></div>` +
+    `<div><div class="q-dk">Сумма заявки</div><div class="q-dv${hasAmount(it) ? " num" : " mut"}">${hasAmount(it) ? fmtMoney(it.amount) : "не указана — смотрите документ"}</div></div>` +
     `<div><div class="q-dk">Кто завёл</div><div class="q-dv">${who}</div></div>` +
     `<div class="full"><div class="q-dk">Вложения</div>` +
       (clientFiles.length || plainDocs.length

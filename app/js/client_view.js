@@ -1,6 +1,6 @@
 import { sb, useRemote, fromRow, uploadFiles } from './supabase.js';
 import { state } from './state.js';
-import { esc, safeUrl, toast } from './utils.js';
+import { esc, safeUrl, toast, hasAmount } from './utils.js';
 import { fmtDate, fmtMoney, todayStr, isoLocal } from './dates.js';
 import { activeOpen } from './queue.js';
 import { threadState } from './thread.js';
@@ -239,7 +239,8 @@ function rowHtmlClient(it) {
           (it.requisites ? `<span>${esc(it.requisites)}</span>` : "") +
         `</div></div>` +
       `<div class="c-right"><span class="c-pill ${pc}">${pt}</span>` +
-        `<span class="c-amt num">${fmtMoney(it.amount)}</span></div>` +
+        (hasAmount(it) ? `<span class="c-amt num">${fmtMoney(it.amount)}</span>`
+                       : `<span class="c-amt none">сумма в документе</span>`) + `</div>` +
     `</div>` +
     (it.purpose ? `<div class="c-purp">${esc(it.purpose)}</div>` : "") +
     files +
