@@ -142,7 +142,7 @@ try {
   ok(rows[0]?.client_id === ROM && rows[0]?.status === "new", "заявка у своей фирмы, статус «принята»");
   ok(rows[0]?.files?.length === 1 && /^https?:/.test(rows[0]?.file_url ?? ""), "файл приложен, зеркало file_url заполнено");
   ok(rows[0]?.recurrence === "once" && rows[0]?.need_receipt === false, "разовый, документ после оплаты не запрошен");
-  ok(/Заявка по файлу/.test(lastSent().text ?? "") && !lastSent().reply_markup, "бот подтвердил, кнопок не прислал");
+  ok(/Заявка по файлу/.test(lastSent().text ?? "") && !lastSent().reply_markup?.inline_keyboard, "бот подтвердил, ни о чём не спросил");
   ok(await session() === null, "черновика не осталось");
 
   await photo({ caption: `${MARK} аренда за октябрь` });
@@ -209,13 +209,44 @@ try {
   let n = sent.length;
   await photo({ caption: `${MARK} группа` }, GROUP, "supergroup");
   ok((await mine()).length === 6 && /\/new/.test(sent[n]?.text ?? ""), "фото в группе заявкой не становится");
+  await message(GROUP, { text: "/help" }, "supergroup");
+  ok(!lastSent().reply_markup, "в группе постоянных кнопок нет");
   await bind(SMI, null);
 
   await photo({ caption: `${MARK} чужой` }, STRANGER);
   ok((await mine()).length === 6 && /не привязаны/.test(lastSent().text), "непривязанный чат — заявки нет");
 
+  console.log("Постоянные кнопки под полем ввода");
+  const labels = (m) => (m.reply_markup?.keyboard ?? []).flat().map((b) => b.text).join(" | ");
+  const BOTH = "🆕 Новая заявка | 📋 Мои платежи";
+  ok(labels(sent.find((m) => /Заявка по файлу/.test(m.text ?? "")) ?? {}) === BOTH, "ответ на первый же файл принёс обе кнопки");
+  await text("/help");
+  ok(labels(lastSent()) === BOTH && lastSent().reply_markup?.is_persistent === true, "/help — обе кнопки, постоянные");
+  await text("📋 Мои платежи");
+  ok(/Ваши платежи/.test(lastSent().text) && labels(lastSent()) === BOTH, "кнопка «Мои платежи» показывает платежи");
+  await text("🆕 Новая заявка");
+  ok((await session())?.step === "payee", "кнопка «Новая заявка» начинает диалог");
+  await text("/cancel");
+  ok(await session() === null && labels(lastSent()) === BOTH, "/cancel — диалог закрыт, кнопки на месте");
+
+  const threadLen = async () => ((await (await rest(`payments?id=eq.${target.id}&select=thread`)).json())[0]?.thread ?? []).length;
+  await setSession("reply", { pid: target.id, token: "demotoken1", payee: target.payee });
+  const was = await threadLen();
+  await text("🆕 Новая заявка");
+  ok(await threadLen() === was && (await session())?.step === "payee",
+    "при открытом ответе бухгалтеру подпись кнопки не уехала ему текстом, а начала заявку");
+  await setSession("reply", { pid: target.id, token: "demotoken1", payee: target.payee });
+  await text("это новая заявка, не та");
+  ok(await threadLen() === was + 1, "а обычный текст со словами «новая заявка» — по-прежнему ответ бухгалтеру");
+  await dropSession();
+
+  await text("/help", STRANGER);
+  ok(!lastSent().reply_markup, "непривязанному кнопок нет");
+
   console.log("Две фирмы: выбор кнопкой");
   await bind(SMI, CHAT);
+  await text("/help");
+  ok(labels(lastSent()) === "📋 Мои платежи", "при двух фирмах — только «Мои платежи»: /new там не работает");
   const asked = await doc(`${MARK}-two.pdf`, { caption: `${MARK} две фирмы` });
   const q = lastSent();
   const buttons = (q.reply_markup?.inline_keyboard ?? []).flat();
@@ -230,7 +261,7 @@ try {
   rows = await mine();
   ok(rows.length === 7 && rows[6]?.client_id === SMI && rows[6]?.client === "ИП Смирнов", "нажал фирму — заявка у неё");
   ok(rows[6]?.purpose === `${MARK} две фирмы` && rows[6]?.payee === `По документу: ${MARK}-two.pdf`, "файл и подпись взяты из исходного сообщения");
-  ok(/ИП Смирнов/.test(lastSent().text), "бот назвал фирму в подтверждении");
+  ok(/ИП Смирнов/.test(lastSent().text) && labels(lastSent()) === "📋 Мои платежи", "бот назвал фирму в подтверждении");
 
   await press("firm:" + SMI, question);
   await press("firm:" + ROM, question);

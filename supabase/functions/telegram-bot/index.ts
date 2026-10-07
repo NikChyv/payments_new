@@ -92,7 +92,8 @@ async function send(chatId: number, text: string, keyboard?: unknown, replyTo?: 
   const body: Record<string, unknown> = {
     chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true,
   };
-  if (keyboard) body.reply_markup = { inline_keyboard: keyboard };
+  // массив — кнопки под сообщением; объект — готовая разметка (см. menu)
+  if (keyboard) body.reply_markup = Array.isArray(keyboard) ? { inline_keyboard: keyboard } : keyboard;
   if (replyTo) body.reply_to_message_id = replyTo;
   try {
     const res = await fetch(`${TG}/bot${BOT}/sendMessage`, {
@@ -142,6 +143,24 @@ const KB = {
   skip:       [[{text:"Пропустить",callback_data:"skip"}]],
   confirm:    [[{text:"✅ Подтвердить",callback_data:"ok"}],[{text:"✖️ Отменить",callback_data:"cancel"}]],
 };
+
+// Постоянные кнопки под полем ввода (решение владельца 07.10): чтобы /new и
+// /payments не набирать руками. Telegram держит их, пока бот не пришлёт другие,
+// поэтому достаточно прикладывать к обычным ответам — у уже привязанных людей
+// они появятся с первым же таким ответом. Подписи совпадают с тем, что бот и
+// раньше понимал текстом («новая заявка», «мои платежи»).
+//
+// Только привязанным и только в личном чате: в группе (chat_id < 0) кнопки
+// увидели бы все участники, а непривязанному они ничего не дадут. При
+// нескольких фирмах кнопки заявки нет — /new там всё равно откажет, заявку
+// такие люди создают файлом.
+const BTN_NEW = "🆕 Новая заявка";
+const BTN_PAYMENTS = "📋 Мои платежи";
+function menu(chatId: number, firms: number) {
+  if (chatId < 0 || firms === 0) return undefined;
+  const row = firms === 1 ? [{ text: BTN_NEW }, { text: BTN_PAYMENTS }] : [{ text: BTN_PAYMENTS }];
+  return { keyboard: [row], resize_keyboard: true, is_persistent: true };
+}
 
 const HELP =
   "📎 Пришлите или перешлите сюда фото или файл счёта — заявка создастся сама.\n\n" +
@@ -230,7 +249,7 @@ async function sendPayments(chatId: number, list: ClientRow[]) {
     .in("client_id", list.map((c) => c.id))
     .in("status", ["new", "in_progress"]).order("due");
 
-  if (!items || items.length === 0) { await send(chatId, "Активных платежей нет. 🎉"); return; }
+  if (!items || items.length === 0) { await send(chatId, "Активных платежей нет. 🎉", menu(chatId, list.length)); return; }
 
   // При частичной оплате — остаток, как в уведомлении «оплачено X, остаток Y»:
   // минуту назад бот сказал «остаток 300», и полная сумма здесь спорила бы с ним.
@@ -245,7 +264,7 @@ async function sendPayments(chatId: number, list: ClientRow[]) {
     `${i + 1}. <b>${esc(it.payee)}</b> — ${amountText(it)}\n   📅 ${fmtDate(it.due)} · ${statusLabel(it.status)}`;
 
   if (list.length === 1) {
-    await send(chatId, `<b>Ваши платежи (${esc(list[0].name)})</b>\n\n` + items.map(line).join("\n\n"));
+    await send(chatId, `<b>Ваши платежи (${esc(list[0].name)})</b>\n\n` + items.map(line).join("\n\n"), menu(chatId, 1));
     return;
   }
 
@@ -255,7 +274,7 @@ async function sendPayments(chatId: number, list: ClientRow[]) {
     if (!own.length) continue;
     blocks.push(`<b>${esc(c.name)}</b>\n\n` + own.map(line).join("\n\n"));
   }
-  await send(chatId, "<b>Ваши платежи</b>\n\n" + blocks.join("\n\n———\n\n"));
+  await send(chatId, "<b>Ваши платежи</b>\n\n" + blocks.join("\n\n———\n\n"), menu(chatId, list.length));
 }
 
 // ---------- загрузка файла из Telegram в Storage ----------
@@ -506,7 +525,8 @@ async function submit(chatId: number, tgId: number, token: string, d: Draft) {
   const moved = due !== d.due
     ? `\n\n⏭ Рабочий день бухгалтерии закончился (пн–пт до 17:00), поэтому платёж перенесён на ${fmtDate(due)}.`
     : "";
-  await send(chatId, `✅ Заявка отправлена бухгалтеру. Платёж «${esc(d.payee)}» на ${fmtDate(due)} в очереди.${moved}\n\nПосмотреть статус: /payments`);
+  await send(chatId, `✅ Заявка отправлена бухгалтеру. Платёж «${esc(d.payee)}» на ${fmtDate(due)} в очереди.${moved}\n\nПосмотреть статус: /payments`,
+    menu(chatId, 1)); // диалог /new бывает только у одной фирмы
 }
 
 // ---------- заявка по документу: файл без команды ----------
@@ -552,7 +572,8 @@ async function submitByDocument(
     `✅ Заявка по файлу «${esc(file.name)}» отправлена бухгалтеру` +
     (nameFirm ? ` от фирмы «${esc(client.name)}»` : "") +
     (due ? ` — платёж на ${fmtDate(due)}.` : ".") +
-    "\n\nПолучателя и сумму бухгалтер возьмёт из документа.\n\nПосмотреть статус: /payments");
+    "\n\nПолучателя и сумму бухгалтер возьмёт из документа.\n\nПосмотреть статус: /payments",
+    menu(chatId, nameFirm ? 2 : 1));
   return true;
 }
 
@@ -713,13 +734,13 @@ async function handleMessage(msg: any) {
         `Теперь уведомления приходят по ${list.length} фирмам: ` +
         list.map((c) => `«${esc(c.name)}»`).join(", ") + ".\n\n" +
         "Чтобы создать заявку, пришлите сюда фото или файл счёта — я спрошу, от какой он фирмы. " +
-        "Или заводите заявки по персональной ссылке нужной фирмы.");
+        "Или заводите заявки по персональной ссылке нужной фирмы.", menu(chatId, list.length));
     } else {
-      await send(chatId, `Готово! Аккаунт «${esc(target.name)}» привязан.\n\n${HELP}`);
+      await send(chatId, `Готово! Аккаунт «${esc(target.name)}» привязан.\n\n${HELP}`, menu(chatId, 1));
     }
     return;
   }
-  if (text === "/help") { await send(chatId, HELP); return; }
+  if (text === "/help") { await send(chatId, HELP, menu(chatId, (await getClients(tgId)).length)); return; }
   if (text === "/myid") { await send(chatId, `Ваш chat_id: <code>${chatId}</code>`); return; }
 
   const list = await getClients(tgId);
@@ -742,7 +763,10 @@ async function handleMessage(msg: any) {
       await send(chatId, "Хорошо, больше ничего по этой заявке не передаю.");
       return;
     }
-    if (!text.startsWith("/")) {
+    // Кнопка «Новая заявка» — тоже команда, хоть и приходит текстом: без этой
+    // оговорки её подпись уехала бы бухгалтеру как ответ по заявке. Сверяем
+    // точно с подписью, не по смыслу: «это новая заявка, не та» — уже ответ.
+    if (!text.startsWith("/") && text !== BTN_NEW) {
       await sendReply(chatId, tgId, answering!.draft, text, null);
       return;
     }
@@ -755,7 +779,7 @@ async function handleMessage(msg: any) {
 
   if (text === "/cancel") {
     await clearSession(tgId);
-    await send(chatId, "Заполнение отменено. Новая заявка — /new");
+    await send(chatId, "Заполнение отменено. Новая заявка — /new", menu(chatId, 1));
     return;
   }
 
@@ -769,7 +793,7 @@ async function handleMessage(msg: any) {
   const session = await getSession(tgId);
   if (session) { await routeText(chatId, tgId, session.step, session.draft, text); return; }
 
-  await send(chatId, "Не понял. " + HELP);
+  await send(chatId, "Не понял. " + HELP, menu(chatId, 1));
 }
 
 async function handleCallback(cq: any) {
@@ -869,7 +893,7 @@ async function handleCallback(cq: any) {
     return;
   }
   if (data === "ok" && session.step === "confirm") { await submit(chatId, tgId, client.token, d); return; }
-  if (data === "cancel") { await clearSession(tgId); await send(chatId, "Заявка отменена. Новая — /new"); return; }
+  if (data === "cancel") { await clearSession(tgId); await send(chatId, "Заявка отменена. Новая — /new", menu(chatId, 1)); return; }
 }
 
 // ---------- вход ----------
