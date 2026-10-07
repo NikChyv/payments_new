@@ -4,6 +4,12 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const BOT            = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
 const WEBHOOK_SECRET = Deno.env.get("TG_WEBHOOK_SECRET")!;
 
+// Адрес Telegram подменяется только в локальной проверке (tools/botcheck.mjs
+// ставит на его место заглушку): иначе путь «прислал файл → заявка» нечем
+// проверить, настоящий Telegram фиктивному токену файл не отдаст. В проде
+// переменной нет.
+const TG = Deno.env.get("TELEGRAM_API") ?? "https://api.telegram.org";
+
 // service_role подставляется Supabase автоматически — бот ходит в БД напрямую
 const sb = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -82,13 +88,14 @@ function parseDate(s: string): string | null {
 // В notify_failures ответы бота не пишем намеренно: это диалог, человек сидит
 // в чате и повторит команду сам, а health.yml краснел бы от каждого, кто
 // заблокировал бота посреди разговора.
-async function send(chatId: number, text: string, keyboard?: unknown): Promise<boolean> {
+async function send(chatId: number, text: string, keyboard?: unknown, replyTo?: number): Promise<boolean> {
   const body: Record<string, unknown> = {
     chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true,
   };
   if (keyboard) body.reply_markup = { inline_keyboard: keyboard };
+  if (replyTo) body.reply_to_message_id = replyTo;
   try {
-    const res = await fetch(`https://api.telegram.org/bot${BOT}/sendMessage`, {
+    const res = await fetch(`${TG}/bot${BOT}/sendMessage`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
     if (!res.ok) console.error(`Telegram sendMessage ${chatId}: ${res.status} ${await res.text()}`);
@@ -104,7 +111,7 @@ async function send(chatId: number, text: string, keyboard?: unknown): Promise<b
 // не создало бы заявку.
 async function answerCallback(id: string) {
   try {
-    await fetch(`https://api.telegram.org/bot${BOT}/answerCallbackQuery`, {
+    await fetch(`${TG}/bot${BOT}/answerCallbackQuery`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ callback_query_id: id }),
     });
   } catch (e) {
@@ -112,8 +119,24 @@ async function answerCallback(id: string) {
   }
 }
 
+// Снять кнопки с сообщения бота. Ответ важен: повторное снятие Telegram
+// отвергает («message is not modified»), и по этому отказу видно, что кнопку
+// уже нажимали, — см. выбор фирмы в handleCallback.
+async function dropKeyboard(chatId: number, messageId: number): Promise<boolean> {
+  try {
+    const res = await fetch(`${TG}/bot${BOT}/editMessageReplyMarkup`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } }),
+    });
+    return res.ok;
+  } catch (e) {
+    console.error("editMessageReplyMarkup:", e);
+    return false;
+  }
+}
+
 const KB = {
-  due:        [[{text:"Сегодня",callback_data:"due:today"},{text:"Завтра",callback_data:"due:tomorrow"}]],
+  due:       [[{text:"Сегодня",callback_data:"due:today"},{text:"Завтра",callback_data:"due:tomorrow"}]],
   recurrence: [[{text:"Разовый",callback_data:"rec:once"}],[{text:"Еженедельно",callback_data:"rec:weekly"}],[{text:"Ежемесячно",callback_data:"rec:monthly"}]],
   needReceipt:[[{text:"Да",callback_data:"nr:1"},{text:"Нет",callback_data:"nr:0"}]],
   skip:       [[{text:"Пропустить",callback_data:"skip"}]],
@@ -121,8 +144,9 @@ const KB = {
 };
 
 const HELP =
+  "📎 Пришлите или перешлите сюда фото или файл счёта — заявка создастся сама.\n\n" +
   "Команды:\n" +
-  "🆕 /new — новая заявка на оплату\n" +
+  "🆕 /new — новая заявка по шагам\n" +
   "📋 /payments — мои платежи\n" +
   "✖️ /cancel — отменить заполнение\n" +
   "ℹ️ /help — помощь";
@@ -146,6 +170,18 @@ function replyAlive(s: Session | null) {
   if (!s || s.step !== "reply") return false;
   const t = Date.parse(String(s.updated_at ?? ""));
   return !isFinite(t) || (Date.now() - t) < REPLY_TTL;
+}
+
+// Файл, присланный без команды, сразу становится заявкой. Исключение — человек
+// прямо сейчас заполняет /new и дошёл до файла или до экрана подтверждения:
+// тогда файл идёт в черновик. «Прямо сейчас» — час: у сессий /new срока нет,
+// и брошенный месяц назад черновик иначе перехватил бы сегодняшний счёт и
+// показал бы экран подтверждения со старыми получателем и суммой.
+const DIALOG_TTL = 3600 * 1000;
+function draftAwaitsFile(s: Session | null) {
+  if (!s || (s.step !== "file" && s.step !== "confirm")) return false;
+  const t = Date.parse(String(s.updated_at ?? ""));
+  return !isFinite(t) || (Date.now() - t) < DIALOG_TTL;
 }
 async function setSession(tgId: number, step: string, draft: Draft) {
   await sb.from("tg_sessions").upsert({ telegram_id: tgId, step, draft, updated_at: new Date().toISOString() });
@@ -174,14 +210,16 @@ async function getClients(tgId: number): Promise<ClientRow[]> {
 const NOT_BOUND = "Вы ещё не привязаны. Откройте персональную ссылку от бухгалтера и нажмите «Старт».";
 
 // Заявку вслепую за человека с двумя фирмами создавать нельзя: попадёт не в ту
-// компанию, и это увидят только на сверке. Пока выбор фирмы в боте не сделан,
-// честно отправляем такого человека на персональную ссылку. Сами ссылки в чат
-// не пишем — токен в переписке остаётся навсегда, а у клиента они уже есть.
+// компанию, и это увидят только на сверке. Фирму бот спрашивает кнопкой только
+// у присланного файла (см. handleMessage); в диалоге /new выбора нет, поэтому
+// оттуда честно отправляем на файл или на персональную ссылку. Сами ссылки в
+// чат не пишем — токен в переписке остаётся навсегда, а у клиента они уже есть.
 function manyFirms(list: ClientRow[]) {
   return "У вас привязано несколько фирм: " + list.map((c) => `«${esc(c.name)}»`).join(", ") + ".\n\n" +
     "✅ Уведомления об оплате приходят по всем — делать ничего не нужно.\n\n" +
-    "А вот новую заявку через бота я принять не могу: не пойму, от какой фирмы она. " +
-    "Откройте персональную ссылку нужной фирмы — ту, что присылал бухгалтер, — и заведите заявку там.";
+    "📎 Чтобы создать заявку, пришлите сюда фото или файл счёта — я спрошу, от какой он фирмы.\n\n" +
+    "Заявку по шагам (/new) при нескольких фирмах я принять не могу: не пойму, от какой она. " +
+    "Для неё откройте персональную ссылку нужной фирмы — ту, что присылал бухгалтер.";
 }
 
 // Активные платежи по всем фирмам чата. Заголовок с названием фирмы печатаем
@@ -255,6 +293,34 @@ type UploadResult =
   | { ok: true; url: string; name: string }
   | { ok: false; reason: "type" | "size" | "fail" };
 
+// Вложение сообщения в одном виде, откуда бы оно ни пришло: документом или фото.
+type TgFile = { id: string; name: string; mime?: string; size?: number };
+function fileOf(msg: any): TgFile | null {
+  if (msg?.document) {
+    const d = msg.document;
+    return { id: d.file_id, name: d.file_name || "файл", mime: d.mime_type, size: d.file_size };
+  }
+  if (msg?.photo?.length) {
+    const ph = msg.photo[msg.photo.length - 1]; // самый крупный размер
+    return { id: ph.file_id, name: "photo.jpg", mime: "image/jpeg", size: ph.file_size };
+  }
+  return null;
+}
+
+// То, что видно по самому сообщению, без скачивания. Отдельно от загрузки —
+// чтобы не спрашивать «от какой фирмы?» про файл, который всё равно не примем.
+function fileRefusal(f: TgFile): "type" | "size" | null {
+  if (!resolveMime(f.name, f.mime)) return "type";
+  if (f.size && f.size > MAX_FILE_BYTES) return "size";
+  return null;
+}
+
+// причина отказа человеку важнее факта отказа: иначе он шлёт то же самое по кругу
+const FILE_REFUSED = {
+  type: "Такой файл не принимается. Пришлите фото счёта, PDF или документ Word/Excel.",
+  size: "Файл больше 10 МБ. Сфотографируйте счёт с меньшим качеством или пришлите PDF.",
+};
+
 async function uploadTelegramFile(
   fileId: string, fallbackName: string, mime?: string, sizeHint?: number,
 ): Promise<UploadResult> {
@@ -262,11 +328,11 @@ async function uploadTelegramFile(
   if (!contentType) return { ok: false, reason: "type" };
   if (sizeHint && sizeHint > MAX_FILE_BYTES) return { ok: false, reason: "size" };
 
-  const r1 = await fetch(`https://api.telegram.org/bot${BOT}/getFile?file_id=${fileId}`);
+  const r1 = await fetch(`${TG}/bot${BOT}/getFile?file_id=${fileId}`);
   const j1 = await r1.json();
   if (!j1.ok) return { ok: false, reason: "fail" };
   const filePath: string = j1.result.file_path;
-  const r2 = await fetch(`https://api.telegram.org/file/bot${BOT}/${filePath}`);
+  const r2 = await fetch(`${TG}/file/bot${BOT}/${filePath}`);
   const buf = await r2.arrayBuffer();
   // file_size Telegram присылает не всегда — перепроверяем по факту
   if (buf.byteLength > MAX_FILE_BYTES) return { ok: false, reason: "size" };
@@ -443,60 +509,132 @@ async function submit(chatId: number, tgId: number, token: string, d: Draft) {
   await send(chatId, `✅ Заявка отправлена бухгалтеру. Платёж «${esc(d.payee)}» на ${fmtDate(due)} в очереди.${moved}\n\nПосмотреть статус: /payments`);
 }
 
+// ---------- заявка по документу: файл без команды ----------
+
+// Человек прислал или переслал счёт — заявка создаётся сразу, без вопросов и
+// без экрана подтверждения (решение владельца 07.10). Получателя, сумму и дату
+// не передаём: с приложенным файлом база дописывает их сама — «По документу:
+// <файл>», сумма неизвестна, ближайший рабочий день (20261005000001). Подпись
+// к файлу уходит в назначение: «за аренду, октябрь» пишут именно туда.
+//
+// Возвращает, создана ли заявка: от этого зависит, трогать ли черновик /new.
+async function submitByDocument(
+  chatId: number, client: ClientRow, file: {url: string; name: string}, caption: string, nameFirm: boolean,
+): Promise<boolean> {
+  const { data: newId, error } = await sb.rpc("submit_payment", {
+    p_token:        client.token,
+    p_payee:        null,
+    p_amount:       null,
+    p_requisites:   null,
+    p_due:          null,
+    p_recurrence:   "once",
+    p_purpose:      caption.slice(0, MAX_LEN.purpose[0]) || null,
+    p_need_receipt: false,
+    p_file_url:     file.url,
+    p_file_name:    file.name,
+  });
+
+  if (error) {
+    console.error(error);
+    const why = (error as {message?: string}).message || "";
+    await send(chatId,
+      (why ? `Не удалось создать заявку: ${esc(why)}` : "Не удалось создать заявку.") +
+      "\n\nПришлите файл ещё раз.");
+    return false;
+  }
+
+  let due = "";
+  if (newId) {
+    const { data: row } = await sb.from("payments").select("due").eq("id", newId).maybeSingle();
+    if (row?.due) due = row.due;
+  }
+  await send(chatId,
+    `✅ Заявка по файлу «${esc(file.name)}» отправлена бухгалтеру` +
+    (nameFirm ? ` от фирмы «${esc(client.name)}»` : "") +
+    (due ? ` — платёж на ${fmtDate(due)}.` : ".") +
+    "\n\nПолучателя и сумму бухгалтер возьмёт из документа.\n\nПосмотреть статус: /payments");
+  return true;
+}
+
 // ---------- обработчики ----------
 
 async function handleMessage(msg: any) {
   const chatId = msg.chat.id as number;
   const tgId = chatId;
 
-  // вложение (фото/документ) — на шаге file (новая заявка) или reply (ответ)
-  if (msg.photo || msg.document) {
+  // Вложение (фото/документ). Три судьбы, по порядку:
+  //   • открыт ответ бухгалтеру — файл уходит в ту заявку;
+  //   • человек заполняет /new и дошёл до файла — файл идёт в черновик;
+  //   • иначе файл сам становится заявкой, без команд и кнопок.
+  const f = fileOf(msg);
+  if (f) {
     const list = await getClients(tgId);
     if (list.length === 0) { await send(chatId, NOT_BOUND); return; }
     const session = await getSession(tgId);
     const answering = replyAlive(session);
+    const caption = String(msg.caption ?? "").trim();
+    // Диалог /new бывает только у одной фирмы — см. проверки в handleCallback.
+    const intoDraft = !answering && list.length === 1 && draftAwaitsFile(session);
 
     // Ответ привязан к конкретной заявке, поэтому фирма известна однозначно —
-    // проверку «несколько фирм» здесь применять нельзя, иначе человек с двумя
+    // проверку «несколько фирм» к нему применять нельзя, иначе человек с двумя
     // компаниями не сможет прислать счёт.
-    if (!answering) {
-      if (list.length > 1) { await send(chatId, manyFirms(list)); return; }
-      if (!session || session.step !== "file") { await send(chatId, "Чтобы создать заявку: /new"); return; }
+    if (!answering && !intoDraft) {
+      // Сама заявка из файла — только в личном чате. Привязанные раньше группы
+      // (M5.2) работают как работали: там файл присылает любой участник, и
+      // заявкой становилась бы каждая картинка в переписке.
+      if (msg.chat.type !== "private") {
+        await send(chatId, list.length > 1 ? manyFirms(list) : "Чтобы создать заявку: /new");
+        return;
+      }
+      // Несколько фирм: спрашиваем кнопкой, ОТВЕТОМ на сам файл. Черновика не
+      // заводим — файл потом берём из сообщения, на которое отвечали
+      // (cq.message.reply_to_message). Сессия здесь проиграла бы: альбом
+      // приходит несколькими сообщениями разом, и они затирали бы её друг другу.
+      if (list.length > 1) {
+        const bad = fileRefusal(f);
+        if (bad) { await send(chatId, FILE_REFUSED[bad]); return; }
+        await send(chatId, "От какой фирмы эта заявка?",
+          list.map((c) => [{ text: c.name, callback_data: "firm:" + c.id }]), msg.message_id);
+        return;
+      }
     }
 
-    let up: UploadResult;
-    if (msg.document) {
-      up = await uploadTelegramFile(
-        msg.document.file_id, msg.document.file_name || "файл",
-        msg.document.mime_type, msg.document.file_size,
-      );
-    } else {
-      const ph = msg.photo[msg.photo.length - 1]; // самый крупный размер
-      up = await uploadTelegramFile(ph.file_id, "photo.jpg", "image/jpeg", ph.file_size);
-    }
+    const up = await uploadTelegramFile(f.id, f.name, f.mime, f.size);
     if (!up.ok) {
-      // причина отказа человеку важнее факта отказа: иначе он шлёт то же самое по кругу
-      await send(chatId, {
-        type: "Такой файл не принимается. Пришлите фото счёта, PDF или документ Word/Excel.",
-        size: "Файл больше 10 МБ. Сфотографируйте счёт с меньшим качеством или пришлите PDF.",
-        fail: answering
-          ? "Файл не загрузился. Попробуйте ещё раз."
-          : "Файл не загрузился. Попробуйте ещё раз или нажмите «Пропустить».",
-      }[up.reason], answering ? undefined : KB.skip);
+      await send(chatId, up.reason !== "fail" ? FILE_REFUSED[up.reason]
+        : intoDraft ? "Файл не загрузился. Попробуйте ещё раз или нажмите «Пропустить»."
+        : "Файл не загрузился. Попробуйте ещё раз.",
+        intoDraft && session!.step === "file" ? KB.skip : undefined);
       return;
     }
 
     // Подпись к файлу — это и есть текст ответа: «вот счёт С-2211» люди пишут
     // прямо в подписи, отдельным сообщением слать не будут.
     if (answering) {
-      await sendReply(chatId, tgId, session!.draft,
-        String(msg.caption ?? "").trim(), { url: up.url, name: up.name });
+      await sendReply(chatId, tgId, session!.draft, caption, { url: up.url, name: up.name });
       return;
     }
 
-    session!.draft.file_url = up.url; session!.draft.file_name = up.name;
-    await setSession(tgId, "confirm", session!.draft);
-    await showConfirm(chatId, session!.draft);
+    // На экране подтверждения новый файл заменяет прежний: в боте он один.
+    if (intoDraft) {
+      session!.draft.file_url = up.url; session!.draft.file_name = up.name;
+      await setSession(tgId, "confirm", session!.draft);
+      await showConfirm(chatId, session!.draft);
+      return;
+    }
+
+    if (!await submitByDocument(chatId, list[0], up, caption, false)) return;
+
+    // Остался черновик /new с более раннего шага (или брошенный давно) — он
+    // больше не нужен: заявка уже создана по документу, а оставленный черновик
+    // принял бы следующее сообщение человека за ответ на свой вопрос.
+    if (session) {
+      await clearSession(tgId);
+      if (session.step !== "reply") {
+        await send(chatId, "Заполнение по шагам (/new), которое вы не закончили, я сбросил: заявка уже создана по файлу.");
+      }
+    }
     return;
   }
 
@@ -574,7 +712,8 @@ async function handleMessage(msg: any) {
         `Готово! Фирма «${esc(target.name)}» привязана.\n\n` +
         `Теперь уведомления приходят по ${list.length} фирмам: ` +
         list.map((c) => `«${esc(c.name)}»`).join(", ") + ".\n\n" +
-        "Заявки заводите по персональной ссылке нужной фирмы — так она точно не уйдёт не на ту компанию.");
+        "Чтобы создать заявку, пришлите сюда фото или файл счёта — я спрошу, от какой он фирмы. " +
+        "Или заводите заявки по персональной ссылке нужной фирмы.");
     } else {
       await send(chatId, `Готово! Аккаунт «${esc(target.name)}» привязан.\n\n${HELP}`);
     }
@@ -665,6 +804,32 @@ async function handleCallback(cq: any) {
     await send(chatId,
       `✍️ Напишите ответ по заявке «${esc(pay.payee)}» — текстом, файлом или тем и другим сразу.\n\n` +
       "Фото или PDF счёта можно прислать прямо сюда. Передумали — /cancel");
+    return;
+  }
+
+  // Выбор фирмы под присланным файлом. Тоже до проверки «несколько фирм» —
+  // ради неё кнопка и существует — и тоже со сверкой: фирма из callback_data
+  // обязана быть среди привязанных к этому чату.
+  if (data.startsWith("firm:")) {
+    const own = list.find((c) => c.id === data.slice(5));
+    if (!own) { await send(chatId, "Эта фирма к вашему Telegram не привязана. Пришлите файл ещё раз."); return; }
+    // Файл лежит в сообщении, на которое бот отвечал вопросом. Его нет, если
+    // человек удалил своё сообщение или вопрос слишком старый.
+    const f = fileOf(cq.message?.reply_to_message);
+    if (!f) { await send(chatId, "Не нашёл файл, к которому был вопрос. Пришлите его ещё раз."); return; }
+
+    // Двойное нажатие создало бы две заявки, а запомнить «уже нажато» негде:
+    // черновика нет. Поэтому первым делом снимаем кнопки — второй раз Telegram
+    // этого сделать не даст, и повторное нажатие остановится здесь.
+    if (!await dropKeyboard(chatId, cq.message.message_id)) return;
+
+    const up = await uploadTelegramFile(f.id, f.name, f.mime, f.size);
+    if (!up.ok) {
+      await send(chatId, up.reason !== "fail" ? FILE_REFUSED[up.reason] : "Файл не загрузился. Пришлите его ещё раз.");
+      return;
+    }
+    await submitByDocument(chatId, own, up,
+      String(cq.message.reply_to_message.caption ?? "").trim(), list.length > 1);
     return;
   }
 
