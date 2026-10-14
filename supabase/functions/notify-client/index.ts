@@ -2,6 +2,9 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const BOT = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
+// Адрес Telegram подменяется только в локальной проверке (tools/notifycheck.mjs
+// ставит на его место заглушку и читает, что именно ушло). В проде переменной нет.
+const TG = Deno.env.get("TELEGRAM_API") ?? "https://api.telegram.org";
 // Номера бухгалтеров здесь больше не живут: адресатов по каждой заявке считает
 // база (notify_staff_chats), см. staffChats ниже. Раньше это был секрет
 // TELEGRAM_CHAT_ID, и всё уходило всем подряд, чей бы клиент ни был.
@@ -99,18 +102,31 @@ async function logFailure(branch: string, paymentId: unknown, chatId: unknown, d
 //
 // Та же функция есть в notify-payment — правило в базе, а обёртка простая,
 // поэтому держим две копии, а не заводим общий модуль ради десяти строк.
-async function staffChats(branch: string, rec: Record<string, unknown>): Promise<string[]> {
+//
+// shared — на случай, когда у двух бухгалтеров один Telegram на двоих (общий
+// телефон): база называет этот чат и имя бухгалтера клиента, и сообщение в
+// него уходит с именем в заголовке — иначе в общем чате не понять, чьё оно.
+type Staff = { chats: string[]; shared: { chat: string; name: string } | null };
+async function staffChats(branch: string, rec: Record<string, unknown>): Promise<Staff> {
   const { data, error } = await sb.rpc("notify_staff_chats", { p_client_id: rec.client_id ?? null });
   if (error) {
     console.error("notify_staff_chats:", error);
     await logFailure(branch, rec.id, null, `не удалось получить адресатов: ${error.message}`);
-    return [];
+    return { chats: [], shared: null };
   }
   if (data?.unreachable) {
     await logFailure(branch, rec.id, null,
       `у бухгалтера «${data.unreachable}» не указан telegram_id — уведомление ушло только админу`);
   }
-  return Array.isArray(data?.chats) ? data.chats : [];
+  return {
+    chats: Array.isArray(data?.chats) ? data.chats : [],
+    shared: data?.shared?.chat && data?.shared?.name
+      ? { chat: String(data.shared.chat), name: String(data.shared.name) } : null,
+  };
+}
+// Хвост заголовка для этого чата: « · Елена» в общем чате, пусто в остальных.
+function forWhom(s: Staff, chat: string) {
+  return s.shared && s.shared.chat === String(chat) ? ` · ${esc(s.shared.name)}` : "";
 }
 
 async function tg(chatId: string | number, text: string, keyboard?: unknown, branch = "?", paymentId?: unknown) {
@@ -124,7 +140,7 @@ async function tg(chatId: string | number, text: string, keyboard?: unknown, bra
   // уведомления по заявке не уходили вовсе. Отправка не имеет права бросать.
   let res: Response;
   try {
-    res = await fetch(`https://api.telegram.org/bot${BOT}/sendMessage`, {
+    res = await fetch(`${TG}/bot${BOT}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -183,7 +199,7 @@ async function tgDocument(chatId: string | number, url: string, name: string, ca
 
   let res: Response;
   try {
-    res = await fetch(`https://api.telegram.org/bot${BOT}/sendDocument`, { method: "POST", body: form });
+    res = await fetch(`${TG}/bot${BOT}/sendDocument`, { method: "POST", body: form });
   } catch (e) {
     const detail = `Telegram недоступен: ${e instanceof Error ? e.message : String(e)}`;
     console.error(detail);
@@ -298,9 +314,9 @@ serve(async (req) => {
     // изменил». Спрашиваем базу лениво и один раз: чаще всего вызов про статус
     // или документ, и сотрудникам там слать нечего. Заодно запись «у бухгалтера
     // нет Telegram» не задвоится, если в одном вызове сработают обе ветки.
-    let staffChatsMemo: string[] | null = null;
-    const getStaffChats = async (branch: string) =>
-      staffChatsMemo ??= await staffChats(branch, rec);
+    let staffMemo: Staff | null = null;
+    const getStaff = async (branch: string) =>
+      staffMemo ??= await staffChats(branch, rec);
 
     // ---------- 0. платёжный документ от бухгалтера ----------
     // Стоит первой намеренно: прикрепление документа приходит сюда как обычный
@@ -386,8 +402,9 @@ serve(async (req) => {
         }
 
         // ответ клиента → бухгалтеру этого клиента и админам
-        const replyChats = hasForStaff ? await getStaffChats("переписка → бухгалтерам") : [];
-        if (hasForStaff && replyChats.length) {
+        const replyStaff = hasForStaff ? await getStaff("переписка → бухгалтерам") : null;
+        const replyChats = replyStaff?.chats ?? [];
+        if (replyStaff && replyChats.length) {
           const card = `👤 ${esc(rec.client)}\n`
                      + `💳 ${esc(rec.payee)} · ${amountOrDoc(rec)} · ${fmtDate(String(rec.due))}`;
           let i = fromStaff;
@@ -400,11 +417,12 @@ serve(async (req) => {
               .filter((f) => f && f.url)
               .map((f) => `📎 <a href="${esc(f.url)}">${esc(f.name || "файл")}</a>`)
               .join("\n");
-            const text = `💬 <b>Клиент ответил по заявке</b>\n\n${card}\n\n`
+            const text = `\n\n${card}\n\n`
                        + (m.text ? `«${esc(m.text)}»` : "<i>без текста</i>")
                        + (files ? `\n\n${files}` : "");
-            const results = await Promise.all(
-              replyChats.map((chat) => tg(chat, text, undefined, "переписка → бухгалтерам", rec.id)));
+            const results = await Promise.all(replyChats.map((chat) =>
+              tg(chat, `💬 <b>Клиент ответил по заявке${forWhom(replyStaff, chat)}</b>` + text,
+                 undefined, "переписка → бухгалтерам", rec.id)));
             if (!results.some(Boolean)) break;   // не дошло вообще никому — повторим позже
           }
           if (i > fromStaff) { patch.staff_thread_notified = i; done.push("ответ бухгалтерам"); }
@@ -511,13 +529,14 @@ serve(async (req) => {
 
       // правил клиент → сообщаем бухгалтеру этого клиента и админам
       } else if (rec.last_edit_role === "anon") {
-        const editChats = await getStaffChats("правка → бухгалтерам");
+        const editStaff = await getStaff("правка → бухгалтерам");
+        const editChats = editStaff.chats;
         if (editChats.length) {
-          const head = `✏️ <b>Клиент изменил заявку</b>\n\n`
-                     + `👤 ${esc(rec.client)}\n`
+          const head = `\n\n👤 ${esc(rec.client)}\n`
                      + `💳 ${esc(rec.payee)} · ${amountOrDoc(rec)} · ${fmtDate(String(rec.due))}\n\n`;
           await Promise.all(editChats.map((chat) =>
-            tg(chat, head + changes.join("\n"), undefined, "правка → бухгалтерам", rec.id)));
+            tg(chat, `✏️ <b>Клиент изменил заявку${forWhom(editStaff, chat)}</b>` + head + changes.join("\n"),
+               undefined, "правка → бухгалтерам", rec.id)));
           done.push("правка");
         } else {
           await logFailure("правка → бухгалтерам", rec.id, null,

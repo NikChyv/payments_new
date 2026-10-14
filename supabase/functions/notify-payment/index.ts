@@ -13,6 +13,11 @@ const sb = createClient(
 // с невнятным 500 и не успевала даже записать отказ в журнал (M4.4).
 const BOT = Deno.env.get("TELEGRAM_BOT_TOKEN") ?? "";
 
+// Адрес Telegram подменяется только в локальной проверке (tools/notifycheck.mjs
+// ставит на его место заглушку и читает, что именно ушло бухгалтерам). В проде
+// переменной нет.
+const TG = Deno.env.get("TELEGRAM_API") ?? "https://api.telegram.org";
+
 // Номеров бухгалтеров здесь больше нет. Раньше «новая заявка» уходила всем из
 // секрета TELEGRAM_CHAT_ID, чей бы клиент ни был, — теперь адресатов по каждой
 // заявке считает база (notify_staff_chats, см. staffChats ниже).
@@ -46,18 +51,31 @@ async function logFailure(branch: string, paymentId: unknown, chatId: unknown, d
 // Кому из сотрудников слать: бухгалтер клиента плюс админы. Правило живёт в
 // базе (notify_staff_chats) — одно на обе функции уведомлений и на утреннее
 // письмо. Та же обёртка есть в notify-client.
-async function staffChats(rec: Record<string, unknown>): Promise<string[]> {
+//
+// shared — на случай, когда у двух бухгалтеров один Telegram на двоих (общий
+// телефон): база называет этот чат и имя бухгалтера клиента, и сообщение в
+// него уходит с именем в заголовке — иначе в общем чате не понять, чьё оно.
+type Staff = { chats: string[]; shared: { chat: string; name: string } | null };
+async function staffChats(rec: Record<string, unknown>): Promise<Staff> {
   const { data, error } = await sb.rpc("notify_staff_chats", { p_client_id: rec.client_id ?? null });
   if (error) {
     console.error("notify_staff_chats:", error);
     await logFailure("новая заявка", rec.id, null, `не удалось получить адресатов: ${error.message}`);
-    return [];
+    return { chats: [], shared: null };
   }
   if (data?.unreachable) {
     await logFailure("новая заявка", rec.id, null,
       `у бухгалтера «${data.unreachable}» не указан telegram_id — уведомление ушло только админу`);
   }
-  return Array.isArray(data?.chats) ? data.chats : [];
+  return {
+    chats: Array.isArray(data?.chats) ? data.chats : [],
+    shared: data?.shared?.chat && data?.shared?.name
+      ? { chat: String(data.shared.chat), name: String(data.shared.name) } : null,
+  };
+}
+// Хвост заголовка для этого чата: « · Елена» в общем чате, пусто в остальных.
+function forWhom(s: Staff, chat: string) {
+  return s.shared && s.shared.chat === String(chat) ? ` · ${esc(s.shared.name)}` : "";
 }
 
 const months = ["янв","фев","мар","апр","мая","июн","июл","авг","сен","окт","ноя","дек"];
@@ -109,7 +127,8 @@ serve(async (req) => {
       await logFailure("новая заявка", record.id, null, "не задан TELEGRAM_BOT_TOKEN");
       return new Response("not configured", { status: 500 });
     }
-    const chats = await staffChats(record);
+    const staff = await staffChats(record);
+    const chats = staff.chats;
     if (!chats.length) {
       await logFailure("новая заявка", record.id, null,
         "некому отправить: ни у бухгалтера клиента, ни у админов не указан telegram_id");
@@ -118,8 +137,8 @@ serve(async (req) => {
 
     const fileUrl = safeUrl(record.file_url);
 
+    // заголовок у каждого чата свой (см. forWhom), остальное одинаковое
     const lines = [
-      `📋 <b>Новая заявка на оплату</b>`,
       ``,
       `👤 Клиент: ${esc(record.client || "—")}`,
       `💳 Кому: ${esc(record.payee || "—")}`,
@@ -138,12 +157,12 @@ serve(async (req) => {
       // уже закрыт в notify-client.
       let res: Response;
       try {
-        res = await fetch(`https://api.telegram.org/bot${BOT}/sendMessage`, {
+        res = await fetch(`${TG}/bot${BOT}/sendMessage`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             chat_id: chat,
-            text: lines,
+            text: `📋 <b>Новая заявка на оплату${forWhom(staff, chat)}</b>\n` + lines,
             parse_mode: "HTML",
             disable_web_page_preview: true,
           }),
