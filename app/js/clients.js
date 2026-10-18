@@ -4,9 +4,21 @@ import { esc, toast } from './utils.js';
 import { monthRange, exportRows } from './export.js';
 import { fmtMoney } from './dates.js';
 import { ico } from './icons.js';
+import { invitedLabel } from './invite.js';
 
 const SVG_OK   = ico("check", 12, "bare", 2.2);
 const SVG_WARN = ico("circleAlert", 12, "bare", 2.2);
+const SVG_SENT = ico("send", 12, "bare", 2);
+
+// Фильтр списка: все / кому ещё не отправили приглашение / кто не подключил бота.
+// Живёт между перерисовками, но не между сеансами — по умолчанию «все».
+export const CLIENT_FILTERS = {
+  all:      { label: "Все",                 test: () => true },
+  notinv:   { label: "Не приглашены",       test: (c) => !c.invited_at && !c.telegram_id },
+  notbound: { label: "Не привязаны к боту", test: (c) => !c.telegram_id },
+};
+let clientFilter = "all";
+export function setClientFilter(f) { if (CLIENT_FILTERS[f]) clientFilter = f; }
 
 // значение пункта «Личная задача» в форме сотрудника: пустое занято «выберите»
 export const PERSONAL = "personal";
@@ -96,7 +108,8 @@ export function renderClients() {
   const per = monthRange();
   const bound = state.clientsList.filter(c => c.telegram_id).length;
 
-  const rows = state.clientsList.map(c => {
+  const shown = state.clientsList.filter(CLIENT_FILTERS[clientFilter].test);
+  const rows = shown.map(c => {
     const link = baseLink(c.token);
     const cnt = state.items.filter(it => it.client_id === c.id).length;
     const id = esc(c.id);
@@ -105,8 +118,14 @@ export function renderClients() {
     const bot = c.telegram_id
       ? `<span class="k-bot ok">${SVG_OK}привязан к боту</span>`
       : `<span class="k-bot no">${SVG_WARN}не привязан к боту — уведомления не приходят</span>`;
+    // Кому уже отправили приглашение — чтобы двое не написали одному, а
+    // третьему никто. У подключившего бота отметка уже не важна.
+    const inv = c.invited_at
+      ? `<span class="k-inv">${SVG_SENT}приглашён ${esc(invitedLabel(c, staffNameById))}</span>`
+      : (c.telegram_id ? "" : `<span class="k-inv no">приглашение не отправлено</span>`);
 
     const acts = [
+      `<button class="k-act" data-invite="${id}">Пригласить</button>`,
       `<button class="k-act" data-copy="${esc(link)}">Копировать</button>`,
       `<button class="k-act" data-rotate="${id}" title="Перевыпустить ссылку — старая перестанет работать">Перевыпустить</button>`,
       `<button class="k-act green" data-export="${id}">Excel</button>`,
@@ -130,7 +149,7 @@ export function renderClients() {
       : "";
 
     return `<div class="k-row">` +
-        `<div class="k-c-name"><div class="k-nm">${esc(c.name)}</div>${bot}</div>` +
+        `<div class="k-c-name"><div class="k-nm">${esc(c.name)}</div>${bot}${inv}</div>` +
         `<div class="k-c-staff"><span class="k-lbl">Бухгалтер</span>${esc(staffNameById(c.staff_id))}</div>` +
         `<div class="k-c-link"><code title="${esc(link)}">${esc(shortLink(c.token))}</code></div>` +
         `<div class="k-c-cnt num${cnt ? "" : " zero"}"><span class="k-lbl">Заявок</span>${cnt}</div>` +
@@ -148,9 +167,18 @@ export function renderClients() {
   }).join("");
 
   const n = state.clientsList.length;
-  box.innerHTML = `<div class="k-sheet">` +
+  const chips = Object.entries(CLIENT_FILTERS).map(([key, f]) => {
+    const cnt = state.clientsList.filter(f.test).length;
+    const on = key === clientFilter;
+    return `<button class="k-chip${on ? " on" : ""}" data-kfilter="${key}" aria-pressed="${on}">` +
+      `${f.label}<b>${cnt}</b></button>`;
+  }).join("");
+  const empty = shown.length ? "" :
+    `<div class="k-empty">${clientFilter === "notinv" ? "Всем отправлено — или клиенты уже подключили бота." : "Все клиенты подключили бота."}</div>`;
+  box.innerHTML = `<div class="k-chips">${chips}</div>` +
+    `<div class="k-sheet">` +
     `<div class="k-hrow" aria-hidden="true"><div>Клиент</div><div>Бухгалтер</div><div>Персональная ссылка</div><div class="r">Заявок</div><div class="r">Действия</div></div>` +
-    rows +
+    rows + empty +
     `<div class="k-foot"><span>${n} ${plural(n, "клиент", "клиента", "клиентов")} · ${bound} ${plural(bound, "привязан", "привязаны", "привязаны")} к боту</span>` +
     (isAdmin ? `<span>Удалить можно только клиента без заявок</span>` : "") + `</div>` +
   `</div>`;

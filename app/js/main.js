@@ -3,7 +3,7 @@ import { state } from './state.js';
 import { todayStr, fmtDate, workingDueFor, fmtDateDow } from './dates.js';
 import { esc, toast, genId, docPayee, isDocPayee } from './utils.js';
 import { onLoggedIn, doLogin, doLogout } from './auth.js';
-import { PERSONAL, addClient, refreshClients, rotateClientToken, deleteClientById, renderClients, saveClientEdit, exportPreview } from './clients.js';
+import { PERSONAL, addClient, refreshClients, rotateClientToken, deleteClientById, renderClients, saveClientEdit, exportPreview, setClientFilter, staffNameById } from './clients.js';
 import { exportClientPayments } from './export.js';
 import { render, onListClick, initQueue } from './queue.js';
 import {
@@ -11,6 +11,7 @@ import {
   resetClientFilter, openClientReply, initClientReply,
 } from './client_view.js';
 import { initThreadDialog } from './thread.js';
+import { initInviteDialog, openInvite } from './invite.js';
 import { ico } from './icons.js';
 
 // ---------- навигация ----------
@@ -433,6 +434,7 @@ async function init() {
   // ----- слушатели -----
   // Окна переписки статичны, а заявка внутри меняется — вешаем по одному разу.
   initThreadDialog();
+  initInviteDialog();
   initClientReply();
   initQueue();
 
@@ -593,6 +595,20 @@ async function init() {
   });
 
   document.getElementById("clientsList").addEventListener("click", e => {
+    // «Пригласить» — окно с готовым сообщением и ссылками этого клиента
+    const invBtn = e.target.closest && e.target.closest("button[data-invite]");
+    if (invBtn) {
+      const c = state.clientsList.find(x => x.id === invBtn.getAttribute("data-invite"));
+      if (c) openInvite(c, staffNameById, renderClients);
+      return;
+    }
+    const fBtn = e.target.closest && e.target.closest("button[data-kfilter]");
+    if (fBtn) {
+      setClientFilter(fBtn.getAttribute("data-kfilter"));
+      renderClients();
+      return;
+    }
+
     const copyBtn = e.target.closest && e.target.closest("button[data-copy]");
     if (copyBtn) {
       const link = copyBtn.getAttribute("data-copy");

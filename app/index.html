@@ -287,6 +287,37 @@
   </div>
 </div>
 
+<!-- ===== ПРИГЛАШЕНИЕ КЛИЕНТА (вкладка «Клиенты») =====
+     Готовый текст с персональными ссылками клиента; собирает app/js/invite.js.
+     Вне #clientsList по той же причине, что и окно переписки. -->
+<div id="invBox" class="ovl hidden">
+  <div class="ovl-card inv-card" role="dialog" aria-modal="true" aria-labelledby="invTitle">
+    <div class="ovl-head">
+      <div>
+        <div class="ovl-title" id="invTitle">Пригласить клиента</div>
+        <div class="ovl-sub"><b id="invFirm">—</b> · ссылки на сайт и бота уже в тексте</div>
+      </div>
+    </div>
+
+    <div class="th-warn hidden" id="invWarn"></div>
+
+    <div class="inv-variants" role="group" aria-label="Вариант сообщения">
+      <button type="button" class="th-chip" data-inv-variant="full">Подробное</button>
+      <button type="button" class="th-chip" data-inv-variant="short">Короткое</button>
+    </div>
+
+    <label class="th-label" for="invText">Сообщение клиенту</label>
+    <textarea id="invText" rows="12" readonly></textarea>
+    <div class="hint">Скопируйте и отправьте клиенту — в Telegram, WhatsApp или на почту. Потом нажмите «Я отправил»: отметку увидят все, и второй раз ему не напишут.</div>
+
+    <div class="ovl-btns">
+      <button class="btn soft" data-inv="close">Закрыть</button>
+      <button class="btn soft" data-inv="mark" id="invMark">Я отправил</button>
+      <button class="btn p" data-inv="copy" id="invCopy">Скопировать текст</button>
+    </div>
+  </div>
+</div>
+
 <!-- ===== МЕНЮ «…» СТРОКИ ОЧЕРЕДИ =====
      Вне #list: поллинг перерисовывает список, а меню должно пережить это.
      Кнопки несут статус и оплаченное из момента, когда меню открыли, —

@@ -398,7 +398,7 @@ body.client-mode .submit{height:52px;padding:0;border-radius:12px;font-size:16px
 .k-add .login-err:empty{display:none}
 .k-sheet{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-sheet)}
 /* ширины колонок — из макета; «Действия» — по самому длинному набору ссылок админа */
-.k-hrow,.k-row{display:grid;grid-template-columns:minmax(0,1fr) 150px 250px 80px 330px;align-items:center;padding:0 20px;border-bottom:1px solid var(--line)}
+.k-hrow,.k-row{display:grid;grid-template-columns:minmax(0,1fr) 140px 200px 70px 420px;align-items:center;padding:0 20px;border-bottom:1px solid var(--line)}
 .k-hrow{background:var(--sunk)}
 .k-hrow div{font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding:11px 14px}
 .k-hrow div:first-child{padding-left:0}
@@ -433,6 +433,22 @@ body.client-mode .submit{height:52px;padding:0;border-radius:12px;font-size:16px
 .k-sub button{padding:8px 17px;font-size:13px}
 .k-sum{font-size:12.5px}
 .k-foot{display:flex;justify-content:space-between;gap:6px 16px;flex-wrap:wrap;padding:12px 20px;background:var(--sunk);font-size:12px;color:var(--muted)}
+/* приглашение: отметка под названием и фильтр над таблицей */
+.k-inv{display:flex;align-items:center;gap:6px;margin-top:3px;font-size:11.5px;color:var(--blue)}
+.k-inv svg{flex:none}
+.k-inv.no{color:var(--muted)}
+.k-chips{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
+.k-chip{display:inline-flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line-strong);border-radius:999px;
+  padding:6px 12px;font-size:13px;font-weight:600;color:var(--soft-ink);cursor:pointer;font-family:inherit}
+.k-chip b{font-weight:700;color:var(--muted);font-variant-numeric:tabular-nums}
+.k-chip:hover{border-color:var(--accent);color:var(--accent)}
+.k-chip.on{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.k-chip.on b{color:var(--on-accent-dim)}
+.k-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.inv-card{max-width:600px}
+.inv-variants{display:flex;gap:6px;margin-bottom:12px}
+.inv-variants .th-chip.on{background:var(--accent-bg);border-color:var(--accent);color:var(--accent)}
+#invText{min-height:240px;font-size:13.5px;line-height:1.5;background:var(--sunk)}
 .k-empty{text-align:center;color:var(--muted);padding:50px 0}
 /* уже 1180 таблица в пять колонок не влезает — карточка на клиента */
 @media(max-width:1180px){
