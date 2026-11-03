@@ -41,6 +41,7 @@ const ok = (cond, msg) => { console.log(`  ${cond ? "✓" : "✗"} ${msg}`); if 
 
 const sent = [];              // всё, что бот отправил: { chat_id, text, reply_markup, reply_to_message_id, message_id }
 const stripped = new Set();   // сообщения, с которых кнопки уже сняты
+const edits = [];             // переписанные вопросы: { chat_id, message_id, text, reply_markup }
 let botMsgId = 9000;
 
 const tg = http.createServer((req, res) => {
@@ -64,6 +65,10 @@ const tg = http.createServer((req, res) => {
       const m = { ...body, message_id: ++botMsgId };
       sent.push(m);
       return json(200, { ok: true, result: { message_id: m.message_id } });
+    }
+    if (method === "editMessageText") {   // шаги бухгалтера переписывают один вопрос
+      edits.push(body);
+      return json(200, { ok: true });
     }
     if (method === "editMessageReplyMarkup") {
       const key = body.chat_id + ":" + body.message_id;
@@ -120,10 +125,37 @@ const dropSession = () => rest(`tg_sessions?telegram_id=eq.${CHAT}`, { method: "
 const todayMinsk = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Minsk" }).format(new Date());
 const nearest = await (await rest("rpc/adjust_due_date", { method: "POST", body: JSON.stringify({ p_due: todayMinsk }) })).json();
 
-const before = await (await rest(`clients?id=in.(${ROM},${SMI})&select=id,telegram_id`)).json();
+// Бухгалтеры для сценария «счёт клиента через бота»: два на одном Telegram,
+// как у живых (13.10). staff.id ссылается на auth.users — заводим учётки.
+const ST = 556010;
+const staffIds = [];
+const makeStaff = async (email, name) => {
+  await fetch(`${API}/auth/v1/admin/users`, { method: "POST", headers: H,
+    body: JSON.stringify({ email, password: "local12345", email_confirm: true }) }).catch(() => {});
+  const list = await (await fetch(`${API}/auth/v1/admin/users`, { headers: H })).json();
+  const u = (list.users || []).find((x) => x.email === email);
+  if (!u) throw new Error("не удалось завести бухгалтера " + email);
+  await rest("staff", { method: "POST", headers: { ...H, Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify({ id: u.id, name, is_admin: false, telegram_id: ST }) });
+  staffIds.push(u.id);
+  return u.id;
+};
+const sessionOf = async (chat) => (await (await rest(`tg_sessions?telegram_id=eq.${chat}&select=*`)).json())[0] ?? null;
+const lastEdit = () => edits[edits.length - 1] ?? {};
+const kb = (m) => (m.reply_markup?.inline_keyboard ?? []).flat();
+const rpc = async (fn, body) => (await rest("rpc/" + fn, { method: "POST", body: JSON.stringify(body) })).json();
+const ddmmyyyy = (iso) => iso.split("-").reverse().join(".");
+
+const before = await (await rest(`clients?id=in.(${ROM},${SMI})&select=id,telegram_id,staff_id`)).json();
 const restore = async () => {
-  for (const c of before) await bind(c.id, c.telegram_id);
-  await dropSession(); await cleanup();
+  for (const c of before) {
+    await rest(`clients?id=eq.${c.id}`, { method: "PATCH", body: JSON.stringify({ telegram_id: c.telegram_id, staff_id: c.staff_id }) });
+  }
+  await dropSession(); await rest(`tg_sessions?telegram_id=eq.${ST}`, { method: "DELETE" }); await cleanup();
+  for (const id of staffIds) {
+    await rest(`staff?id=eq.${id}`, { method: "DELETE" });
+    await fetch(`${API}/auth/v1/admin/users/${id}`, { method: "DELETE", headers: H });
+  }
 };
 
 try {
@@ -283,6 +315,91 @@ try {
 
   await text("/new");
   ok(await session() === null && /пришлите сюда фото или файл/.test(lastSent().text), "/new при двух фирмах — бот отправляет на файл");
+
+  console.log("Бухгалтер: счёт клиента через бота");
+  const A = await makeStaff("botcheck-a@local.test", "Аверина Анна");
+  const B = await makeStaff("botcheck-b@local.test", "Борисова Бэлла");
+  await rest(`clients?id=eq.${ROM}`, { method: "PATCH", body: JSON.stringify({ staff_id: A }) });
+  await rest(`clients?id=eq.${SMI}`, { method: "PATCH", body: JSON.stringify({ staff_id: B }) });
+  const count = async () => (await mine()).length;
+  let total = await count();
+
+  await text("привет", ST);
+  ok(/Перешлите сюда фото или файл счёта от клиента/.test(lastSent().text), "бухгалтеру на текст — подсказка, а не «вы не привязаны»");
+
+  const sdoc = await doc(`${MARK}-staff1.pdf`, { caption: `${MARK} счёт от клиента` }, ST);
+  const sq = lastSent();
+  ok(await count() === total && sq.chat_id === ST && sq.reply_to_message_id === sdoc.message_id,
+    "файл бухгалтера — заявки пока нет, вопрос ответом на файл");
+  ok(kb(sq).map((b) => b.text).join(" | ") === "Аверина Анна | Борисова Бэлла", "общий Telegram — сначала «чей клиент»");
+  const sQ = { message_id: sq.message_id, reply_to_message: sdoc };
+  await press("sw:" + B, sQ, ST);
+  let e = lastEdit();
+  ok(e.message_id === sq.message_id && /Борисова Бэлла/.test(e.text) && kb(e).some((b) => b.callback_data === "sf:" + SMI)
+    && !kb(e).some((b) => b.callback_data === "sf:" + ROM), "выбрал бухгалтера — только его фирмы, тот же вопрос переписан");
+  ok(kb(e).some((b) => b.callback_data === "so"), "есть «◀ Другой бухгалтер»");
+  await press("so", sQ, ST);
+  ok(kb(lastEdit()).length === 2 && /чей это клиент/.test(lastEdit().text), "«Другой бухгалтер» — снова выбор бухгалтера");
+  await press("sf:" + SMI, sQ, ST);
+  e = lastEdit();
+  ok(/ИП Смирнов/.test(e.text) && kb(e).some((b) => b.callback_data === `sd:${SMI}:t`)
+    && kb(e).some((b) => b.callback_data === `sd:${SMI}:n`) && kb(e).some((b) => b.callback_data === "sx:" + SMI),
+    "фирма выбрана — дата: «Сегодня», ближайший рабочий, «Другая дата»");
+  const nextWd = await rpc("next_working_day", { p_d: todayMinsk });
+  const tomorrow = new Date(Date.parse(todayMinsk) + 86400000).toISOString().slice(0, 10);
+  const nextLbl = kb(e).find((b) => b.callback_data === `sd:${SMI}:n`)?.text ?? "";
+  ok(nextWd === tomorrow ? nextLbl === "Завтра" : /^[А-Я][а-я]+, \d{1,2} [а-я]{3}$/.test(nextLbl),
+    `вторая кнопка — «Завтра» или день недели, если завтра выходной («${nextLbl}»)`);
+  await press(`sd:${SMI}:n`, sQ, ST);
+  let sp = (await mine()).find((r) => r.file_name === `${MARK}-staff1.pdf`);
+  ok(sp?.client_id === SMI && sp?.client === "ИП Смирнов" && sp?.created_by_staff === B, "заявка у фирмы, автор — её бухгалтер (Борисова)");
+  ok(sp?.due === nextWd && sp?.amount === null && sp?.payee === `По документу: ${MARK}-staff1.pdf`
+    && sp?.purpose === `${MARK} счёт от клиента`, `дата — ближайший рабочий (${nextWd}), сумма пустая, подпись в назначении`);
+  ok(lastSent().chat_id === ST && /в очереди/.test(lastSent().text) && /ИП Смирнов/.test(lastSent().text), "бот подтвердил бухгалтеру и назвал фирму");
+  total = await count();
+  await press(`sd:${SMI}:t`, sQ, ST);
+  ok(await count() === total, "повторное нажатие второй заявки не создало");
+
+  const sdoc2 = await doc(`${MARK}-staff2.pdf`, {}, ST);
+  const sQ2 = { message_id: lastSent().message_id, reply_to_message: sdoc2 };
+  await press("sx:" + ROM, sQ2, ST);
+  ok((await sessionOf(ST))?.step === "staff_due" && /Напишите дату/.test(lastEdit().text), "«Другая дата» — бот ждёт дату текстом");
+  await text("31.02", ST);
+  ok(await count() === total && /Не понял дату/.test(lastSent().text), "кривая дата — переспросил, заявки нет");
+  const d = new Date(Date.parse(todayMinsk) + 86400000);
+  while (d.getUTCDay() !== 6) d.setUTCDate(d.getUTCDate() + 1);
+  await text(ddmmyyyy(d.toISOString().slice(0, 10)), ST);
+  ok(await count() === total && /выходной/.test(lastSent().text), "будущая суббота — отказ, заявки нет");
+  const later = await rpc("next_working_day", { p_d: new Date(Date.parse(todayMinsk) + 9 * 86400000).toISOString().slice(0, 10) });
+  await text(ddmmyyyy(later), ST);
+  sp = (await mine()).find((r) => r.file_name === `${MARK}-staff2.pdf`);
+  ok(sp?.client_id === ROM && sp?.created_by_staff === A && sp?.due === later, `набранная дата легла (${later}), автор — Аверина`);
+  ok(await sessionOf(ST) === null, "ввод даты закрыт");
+  ok(stripped.has(`${ST}:${sQ2.message_id}`), "кнопку «Назад» под вопросом сняли — второй раз не завести");
+  total = await count();
+
+  const sdoc3 = await doc(`${MARK}-staff3.pdf`, {}, ST);
+  const sQ3 = { message_id: lastSent().message_id, reply_to_message: sdoc3 };
+  await press("sd:11111111-0000-0000-0000-00000000dead:t", sQ3, ST);
+  ok(await count() === total && /недоступна/.test(lastSent().text), "чужая фирма в кнопке — заявки нет");
+  await press("sx:" + ROM, sQ3, ST);
+  await text("/cancel", ST);
+  ok(await sessionOf(ST) === null && /не создаю/.test(lastSent().text) && await count() === total, "/cancel вместо даты — ничего не создано");
+
+  console.log("Один Telegram — и бухгалтера, и клиента");
+  await bind(ROM, ST);
+  const sdoc4 = await doc(`${MARK}-both.pdf`, {}, ST);
+  const q4 = lastSent();
+  ok(kb(q4).map((b) => b.callback_data).join(",") === "as:staff,as:client", "спросил: как бухгалтер или как клиент");
+  await press("as:client", { message_id: q4.message_id, reply_to_message: sdoc4 }, ST);
+  sp = (await mine()).find((r) => r.file_name === `${MARK}-both.pdf`);
+  ok(sp?.client_id === ROM && sp?.created_by_staff === null && /Заявка по файлу/.test(lastSent().text),
+    "«Как клиент» — обычная заявка клиента от его фирмы");
+  const sdoc5 = await doc(`${MARK}-both2.pdf`, {}, ST);
+  const q5 = lastSent();
+  await press("as:staff", { message_id: q5.message_id, reply_to_message: sdoc5 }, ST);
+  ok(q5.message_id === lastEdit().message_id && /чей это клиент/.test(lastEdit().text), "«Как бухгалтер» — выбор бухгалтера на месте вопроса");
+  await bind(ROM, CHAT);
 } finally {
   await restore();
   tg.close();

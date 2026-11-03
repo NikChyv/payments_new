@@ -3,7 +3,7 @@
 -- Единственный путь для anon — SECURITY DEFINER функции по токену.
 
 begin;
-select plan(29);
+select plan(32);
 
 -- ---- RLS включён везде, где есть данные ----
 select ok((select relrowsecurity from pg_class where oid = 'public.payments'::regclass),
@@ -74,6 +74,18 @@ select ok(has_function_privilege('authenticated', 'public.pay_part(text,numeric,
           'сотрудник может записать часть оплаты');
 select ok(has_function_privilege('authenticated', 'public.undo_part(text,text)', 'EXECUTE'),
           'сотрудник может отменить часть оплаты');
+
+-- Заявка бухгалтера через бота (20261103000001): telegram_id в параметре —
+-- вошедший сотрудник подставил бы чужой, поэтому только service_role
+select ok(not has_function_privilege('anon', 'public.staff_bot_submit(bigint,uuid,date,text,text,text)', 'EXECUTE')
+          and not has_function_privilege('authenticated', 'public.staff_bot_submit(bigint,uuid,date,text,text,text)', 'EXECUTE'),
+          'staff_bot_submit не вызвать ни анониму, ни сотруднику');
+select ok(not has_function_privilege('anon', 'public.staff_bot_clients(bigint)', 'EXECUTE')
+          and not has_function_privilege('authenticated', 'public.staff_bot_clients(bigint)', 'EXECUTE'),
+          'staff_bot_clients (список фирм сотрудника) — тоже');
+select ok(has_function_privilege('service_role', 'public.staff_bot_submit(bigint,uuid,date,text,text,text)', 'EXECUTE')
+          and has_function_privilege('service_role', 'public.staff_bot_clients(bigint)', 'EXECUTE'),
+          'бот (service_role) обе функции вызывает');
 
 -- ---- а путь клиента по токену обязан остаться открытым ----
 -- страховка от чрезмерного revoke: если закрыть эти функции, клиенты

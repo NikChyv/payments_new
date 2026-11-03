@@ -136,6 +136,22 @@ async function dropKeyboard(chatId: number, messageId: number): Promise<boolean>
   }
 }
 
+// Переписать вопрос на месте — шаги выбора у бухгалтера («чья», фирма, дата)
+// идут в одном сообщении. Само сообщение остаётся ответом на файл, и по
+// нажатию файл берётся оттуда же (cq.message.reply_to_message).
+async function editMessage(chatId: number, messageId: number, text: string, keyboard: unknown[][] = []) {
+  try {
+    const res = await fetch(`${TG}/bot${BOT}/editMessageText`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, message_id: messageId, text, parse_mode: "HTML",
+        disable_web_page_preview: true, reply_markup: { inline_keyboard: keyboard } }),
+    });
+    if (!res.ok) console.error(`Telegram editMessageText ${chatId}: ${res.status} ${await res.text()}`);
+  } catch (e) {
+    console.error("editMessageText:", e);
+  }
+}
+
 const KB = {
   due:       [[{text:"Сегодня",callback_data:"due:today"},{text:"Завтра",callback_data:"due:tomorrow"}]],
   recurrence: [[{text:"Разовый",callback_data:"rec:once"}],[{text:"Еженедельно",callback_data:"rec:weekly"}],[{text:"Ежемесячно",callback_data:"rec:monthly"}]],
@@ -577,6 +593,240 @@ async function submitByDocument(
   return true;
 }
 
+// Заявка уже создана по файлу, а с более раннего шага остался черновик /new
+// (или брошенный давно): он больше не нужен, а оставленный принял бы следующее
+// сообщение человека за ответ на свой вопрос.
+async function dropStaleDraft(chatId: number, tgId: number, session: Session | null) {
+  if (!session) return;
+  await clearSession(tgId);
+  if (session.step !== "reply" && session.step !== "staff_due") {
+    await send(chatId, "Заполнение по шагам (/new), которое вы не закончили, я сбросил: заявка уже создана по файлу.");
+  }
+}
+
+// ---------- бухгалтер присылает счёт клиента (03.11) ----------
+
+// Часть клиентов в бот не придёт и шлёт счета бухгалтеру в личку. Бухгалтер
+// пересылает файл сюда и выбирает кнопками: чей клиент (если Telegram общий или
+// это админ), фирма, дата. Все шаги — правкой одного вопроса, который висит
+// ответом на файл: файл по нажатию берётся из cq.message.reply_to_message, как
+// при выборе фирмы у клиента, и альбом из нескольких фото не путается.
+//
+// Какие фирмы доступны чату, решает база (staff_bot_clients) — и при показе
+// кнопок, и при создании заявки (staff_bot_submit), так что фирма из
+// подделанной кнопки не пройдёт.
+
+type StaffFirm = { client_id: string; client_name: string; staff_id: string | null; staff_name: string | null };
+
+async function staffFirms(tgId: number): Promise<StaffFirm[]> {
+  const { data, error } = await sb.rpc("staff_bot_clients", { p_telegram_id: tgId });
+  if (error) console.error(error);
+  return (data ?? []) as StaffFirm[];
+}
+
+const STAFF_HELP =
+  "📎 Перешлите сюда фото или файл счёта от клиента — я спрошу, для какой фирмы " +
+  "и на какую дату, и заявка встанет в очередь.";
+
+// Сортируем по самому названию: «ООО "Ромашка"» должна стоять у Р, а не у О.
+const firmKey = (n: string) =>
+  n.replace(/["«»'“”]/g, "").replace(/^\s*(ООО|ОДО|ЧУП|ЧТУП|УП|ИП|ОАО|ЗАО)\s+/i, "").trim().toLowerCase();
+
+type Owner = { key: string; name: string; firms: StaffFirm[] };
+function owners(firms: StaffFirm[]): Owner[] {
+  const map = new Map<string, Owner>();
+  for (const f of firms) {
+    const key = f.staff_id ?? "none";
+    if (!map.has(key)) map.set(key, { key, name: f.staff_name ?? "Без бухгалтера", firms: [] });
+    map.get(key)!.firms.push(f);
+  }
+  const list = [...map.values()];
+  for (const o of list) o.firms.sort((a, b) => firmKey(a.client_name).localeCompare(firmKey(b.client_name), "ru"));
+  return list.sort((a, b) => a.key === "none" ? 1 : b.key === "none" ? -1 : a.name.localeCompare(b.name, "ru"));
+}
+
+type View = { text: string; kb: unknown[][] };
+
+function ownersView(list: Owner[]): View {
+  return { text: "Для какой фирмы этот счёт? Сначала — чей это клиент:",
+    kb: list.map((o) => [{ text: o.name, callback_data: "sw:" + o.key }]) };
+}
+
+function firmsView(o: Owner, many: boolean): View {
+  const kb: unknown[][] = [];
+  for (let i = 0; i < o.firms.length; i += 2) {
+    kb.push(o.firms.slice(i, i + 2).map((f) => ({ text: f.client_name, callback_data: "sf:" + f.client_id })));
+  }
+  if (many) kb.push([{ text: "◀ Другой бухгалтер", callback_data: "so" }]);
+  return { text: "Для какой фирмы этот счёт?" + (many ? ` · ${esc(o.name)}` : ""), kb };
+}
+
+// Первый экран: при одной учётке в чате — сразу её фирмы.
+function staffStart(firms: StaffFirm[]): View {
+  const list = owners(firms);
+  return list.length > 1 ? ownersView(list) : firmsView(list[0], false);
+}
+
+const weekdays = ["воскресенье","понедельник","вторник","среда","четверг","пятница","суббота"];
+function nextWorkingDay(iso: string) {
+  const d = new Date(iso + "T00:00:00Z");
+  do d.setUTCDate(d.getUTCDate() + 1); while (isWeekend(isoLocal(d)));
+  return isoLocal(d);
+}
+
+// Дата — «Сегодня», «Завтра» или своя (решение владельца 03.11). В пятницу
+// «завтра» — выходной, поэтому вторая кнопка — ближайший рабочий день, и в
+// пятницу она так и подписана: «Понедельник, 10 ноя». В кнопке не дата, а
+// «t»/«n»: считаем в момент нажатия — вчерашний вопрос иначе поставил бы
+// платёж на вчера.
+function dueView(f: StaffFirm): View {
+  const today = isoLocal(minskNow());
+  const next = nextWorkingDay(today);
+  const tomorrow = isoLocal(new Date(Date.parse(today + "T00:00:00Z") + 86400000));
+  const nextLbl = next === tomorrow ? "Завтра"
+    : `${weekdays[new Date(next + "T00:00:00Z").getUTCDay()].replace(/^./, (c) => c.toUpperCase())}, ${fmtDate(next).replace(/ \d{4}$/, "")}`;
+  return {
+    text: `🏢 «${esc(f.client_name)}»\n\n📅 Дата платежа?`,
+    kb: [
+      [{ text: "Сегодня", callback_data: `sd:${f.client_id}:t` }, { text: nextLbl, callback_data: `sd:${f.client_id}:n` }],
+      [{ text: "✍️ Другая дата", callback_data: "sx:" + f.client_id }],
+      [{ text: "◀ Другая фирма", callback_data: "sw:" + (f.staff_id ?? "none") }],
+    ],
+  };
+}
+
+async function staffSubmit(
+  chatId: number, tgId: number, firm: StaffFirm, f: TgFile, caption: string, due: string, replyTo?: number,
+) {
+  const up = await uploadTelegramFile(f.id, f.name, f.mime, f.size);
+  if (!up.ok) {
+    await send(chatId, up.reason !== "fail" ? FILE_REFUSED[up.reason] : "Файл не загрузился. Пришлите его ещё раз.");
+    return;
+  }
+  const { data: newId, error } = await sb.rpc("staff_bot_submit", {
+    p_telegram_id: tgId,
+    p_client_id:   firm.client_id,
+    p_due:         due,
+    p_file_url:    up.url,
+    p_file_name:   up.name,
+    p_purpose:     caption.slice(0, MAX_LEN.purpose[0]) || null,
+  });
+  if (error) {
+    console.error(error);
+    const why = (error as {message?: string}).message || "";
+    await send(chatId, (why ? `Не удалось создать заявку: ${esc(why)}` : "Не удалось создать заявку.") +
+      "\n\nПришлите файл ещё раз.");
+    return;
+  }
+  // «Сегодня» после 17:00 база переносит — называем дату, на которую встало.
+  let real = due;
+  if (newId) {
+    const { data: row } = await sb.from("payments").select("due").eq("id", newId).maybeSingle();
+    if (row?.due) real = row.due;
+  }
+  await send(chatId,
+    `✅ Заявка для «${esc(firm.client_name)}» в очереди — платёж на ${fmtDate(real)}.\n\n` +
+    `📎 ${esc(up.name)}` +
+    (real !== due ? `\n\n⏭ Рабочий день бухгалтерии закончился (пн–пт до 17:00), поэтому платёж перенесён на ${fmtDate(real)}.` : "") +
+    "\n\nПолучателя и сумму можно дописать на сайте.",
+    undefined, replyTo);
+}
+
+// «✍️ Другая дата»: ждём текст, поэтому здесь без сессии не обойтись. В ней
+// всё, что нужно для заявки, — фирма и сам файл из исходного сообщения.
+const STAFF_DUE = "staff_due";
+
+async function staffTypedDate(chatId: number, tgId: number, s: Session, text: string) {
+  const d = s.draft;
+  const dt = parseDate(text);
+  if (!dt) { await send(chatId, "Не понял дату. Напишите ДД.ММ или ДД.ММ.ГГГГ, напр. 25.11 — или /cancel."); return; }
+  if (isFuture(dt) && isWeekend(dt)) {
+    await send(chatId, "🚫 В выходной платёж не проводится. Укажите рабочий день (пн–пт).");
+    return;
+  }
+  const firm = (await staffFirms(tgId)).find((c) => c.client_id === d.client_id);
+  await clearSession(tgId);
+  if (!firm) { await send(chatId, "Эта фирма вам недоступна. Пришлите файл ещё раз."); return; }
+  // Под вопросом осталась кнопка «Назад» — снимаем, чтобы по ней не завели второй раз.
+  if (d.question) await dropKeyboard(chatId, Number(d.question));
+  await staffSubmit(chatId, tgId, firm, d.file as TgFile, String(d.caption ?? ""), dt, Number(d.source) || undefined);
+}
+
+// Нажатия на шагах бухгалтера. Возвращает false, если кнопка не его.
+async function handleStaffCallback(cq: any, list: ClientRow[]): Promise<boolean> {
+  const data = cq.data as string;
+  if (!/^(as:|so$|sw:|sf:|sd:|sx:)/.test(data)) return false;
+  const chatId = cq.message.chat.id as number;
+  const tgId = chatId;
+  const mid = cq.message.message_id as number;
+  const src = cq.message?.reply_to_message;
+  const f = fileOf(src);
+  if (!f) { await send(chatId, "Не нашёл файл, к которому был вопрос. Пришлите его ещё раз."); return true; }
+  const caption = String(src.caption ?? "").trim();
+
+  // Чат и сотрудника, и клиента: «Как клиент» — та же дорога, что у файла от клиента.
+  if (data === "as:client") {
+    if (!list.length) { await send(chatId, NOT_BOUND); return true; }
+    if (list.length > 1) {
+      await editMessage(chatId, mid, "От какой фирмы эта заявка?",
+        list.map((c) => [{ text: c.name, callback_data: "firm:" + c.id }]));
+      return true;
+    }
+    if (!await dropKeyboard(chatId, mid)) return true;
+    const up = await uploadTelegramFile(f.id, f.name, f.mime, f.size);
+    if (!up.ok) {
+      await send(chatId, up.reason !== "fail" ? FILE_REFUSED[up.reason] : "Файл не загрузился. Пришлите его ещё раз.");
+      return true;
+    }
+    if (await submitByDocument(chatId, list[0], up, caption, false)) await dropStaleDraft(chatId, tgId, await getSession(tgId));
+    return true;
+  }
+
+  const firms = await staffFirms(tgId);
+  if (!firms.length) { await send(chatId, "Для этого Telegram нет фирм бухгалтера. Пришлите файл ещё раз."); return true; }
+  const all = owners(firms);
+
+  if (data === "as:staff") { const v = staffStart(firms); await editMessage(chatId, mid, v.text, v.kb); return true; }
+  if (data === "so") { const v = ownersView(all); await editMessage(chatId, mid, v.text, v.kb); return true; }
+  if (data.startsWith("sw:")) {
+    const o = all.find((x) => x.key === data.slice(3));
+    if (!o) { await send(chatId, "Этот бухгалтер вам недоступен. Пришлите файл ещё раз."); return true; }
+    const v = firmsView(o, all.length > 1);
+    await editMessage(chatId, mid, v.text, v.kb);
+    return true;
+  }
+
+  const cid = data.slice(3).split(":")[0];
+  const firm = firms.find((c) => c.client_id === cid);
+  if (!firm) { await send(chatId, "Эта фирма вам недоступна. Пришлите файл ещё раз."); return true; }
+
+  if (data.startsWith("sf:")) {
+    // вернулись из «Другой даты» назад — ввод даты больше не ждём
+    const s = await getSession(tgId);
+    if (s?.step === STAFF_DUE) await clearSession(tgId);
+    const v = dueView(firm);
+    await editMessage(chatId, mid, v.text, v.kb);
+    return true;
+  }
+  if (data.startsWith("sx:")) {
+    await setSession(tgId, STAFF_DUE, { client_id: firm.client_id, file: f, caption, question: mid, source: src.message_id });
+    await editMessage(chatId, mid,
+      `🏢 «${esc(firm.client_name)}»\n\n✍️ Напишите дату платежа: ДД.ММ или ДД.ММ.ГГГГ.`,
+      [[{ text: "◀ Назад", callback_data: "sf:" + firm.client_id }]]);
+    return true;
+  }
+
+  // sd: — дата кнопкой, заявка создаётся. Двойное нажатие ловим так же, как
+  // при выборе фирмы у клиента: снять кнопки второй раз Telegram не даст.
+  const today = isoLocal(minskNow());
+  const due = data.endsWith(":n") ? nextWorkingDay(today) : today;
+  if (!await dropKeyboard(chatId, mid)) return true;
+  const s = await getSession(tgId);
+  if (s?.step === STAFF_DUE) await clearSession(tgId);
+  await staffSubmit(chatId, tgId, firm, f, caption, due, src.message_id);
+  return true;
+}
+
 // ---------- обработчики ----------
 
 async function handleMessage(msg: any) {
@@ -590,12 +840,30 @@ async function handleMessage(msg: any) {
   const f = fileOf(msg);
   if (f) {
     const list = await getClients(tgId);
-    if (list.length === 0) { await send(chatId, NOT_BOUND); return; }
+    // Telegram сотрудника — только личный чат: группы к сотрудникам не привязываются.
+    const firms = msg.chat.type === "private" ? await staffFirms(tgId) : [];
+    if (list.length === 0 && firms.length === 0) { await send(chatId, NOT_BOUND); return; }
     const session = await getSession(tgId);
-    const answering = replyAlive(session);
+    const answering = list.length > 0 && replyAlive(session);
     const caption = String(msg.caption ?? "").trim();
     // Диалог /new бывает только у одной фирмы — см. проверки в handleCallback.
     const intoDraft = !answering && list.length === 1 && draftAwaitsFile(session);
+
+    // Бухгалтер переслал счёт клиента. Открытый ответ и черновик /new — это
+    // клиентские дела того же чата, они по-прежнему забирают файл себе.
+    if (firms.length && !answering && !intoDraft) {
+      const bad = fileRefusal(f);
+      if (bad) { await send(chatId, FILE_REFUSED[bad]); return; }
+      // Тот же Telegram привязан и как клиент — спрашиваем каждый раз
+      // (решение владельца 03.11), угадывать нельзя: ошибка уводит заявку
+      // не той фирме.
+      const v = list.length
+        ? { text: "Этот Telegram — и бухгалтера, и клиента. Как завести заявку?",
+            kb: [[{ text: "Как бухгалтер", callback_data: "as:staff" }, { text: "Как клиент", callback_data: "as:client" }]] }
+        : staffStart(firms);
+      await send(chatId, v.text, v.kb, msg.message_id);
+      return;
+    }
 
     // Ответ привязан к конкретной заявке, поэтому фирма известна однозначно —
     // проверку «несколько фирм» к нему применять нельзя, иначе человек с двумя
@@ -645,17 +913,7 @@ async function handleMessage(msg: any) {
       return;
     }
 
-    if (!await submitByDocument(chatId, list[0], up, caption, false)) return;
-
-    // Остался черновик /new с более раннего шага (или брошенный давно) — он
-    // больше не нужен: заявка уже создана по документу, а оставленный черновик
-    // принял бы следующее сообщение человека за ответ на свой вопрос.
-    if (session) {
-      await clearSession(tgId);
-      if (session.step !== "reply") {
-        await send(chatId, "Заполнение по шагам (/new), которое вы не закончили, я сбросил: заявка уже создана по файлу.");
-      }
-    }
+    if (await submitByDocument(chatId, list[0], up, caption, false)) await dropStaleDraft(chatId, tgId, session);
     return;
   }
 
@@ -740,11 +998,32 @@ async function handleMessage(msg: any) {
     }
     return;
   }
-  if (text === "/help") { await send(chatId, HELP, menu(chatId, (await getClients(tgId)).length)); return; }
   if (text === "/myid") { await send(chatId, `Ваш chat_id: <code>${chatId}</code>`); return; }
 
+  // Бухгалтер нажал «✍️ Другая дата» и пишет её. Команда или кнопка меню —
+  // значит передумал: ввод даты закрываем, а команда работает как обычно.
+  const pending = await getSession(tgId);
+  if (pending?.step === STAFF_DUE) {
+    const fresh = Date.now() - Date.parse(String(pending.updated_at ?? "")) < DIALOG_TTL;
+    if (fresh && text === "/cancel") {
+      await clearSession(tgId);
+      await send(chatId, "Хорошо, заявку не создаю.");
+      return;
+    }
+    if (fresh && !text.startsWith("/") && text !== BTN_NEW && text !== BTN_PAYMENTS) {
+      await staffTypedDate(chatId, tgId, pending, text);
+      return;
+    }
+    await clearSession(tgId);
+  }
+
   const list = await getClients(tgId);
-  if (list.length === 0) { await send(chatId, NOT_BOUND); return; }
+  if (list.length === 0) {
+    const staff = msg.chat.type === "private" && (await staffFirms(tgId)).length > 0;
+    await send(chatId, staff ? STAFF_HELP : text === "/help" ? HELP : NOT_BOUND);
+    return;
+  }
+  if (text === "/help") { await send(chatId, HELP, menu(chatId, list.length)); return; }
 
   // «Мои платежи» работает и с несколькими фирмами: это чтение, перепутать
   // ничего нельзя, а человеку с двумя компаниями список нужен как раз целиком.
@@ -803,6 +1082,10 @@ async function handleCallback(cq: any) {
   await answerCallback(cq.id);
 
   const list = await getClients(tgId);
+
+  // Шаги бухгалтера со счётом клиента. До проверок ниже: «несколько фирм» и
+  // «сессия не найдена» — про диалог клиента, к этим кнопкам они не относятся.
+  if (await handleStaffCallback(cq, list)) return;
 
   // «✍️ Ответить» под вопросом бухгалтера.
   //
