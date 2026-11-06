@@ -20,6 +20,38 @@ export const CLIENT_FILTERS = {
 let clientFilter = "all";
 export function setClientFilter(f) { if (CLIENT_FILTERS[f]) clientFilter = f; }
 
+// Поиск по названию и бухгалтер — чтобы следить за подключением по своим
+// клиентам. Сужают и список, и счётчики на чипах: выбрал бухгалтера — видно,
+// сколько у него ещё не приглашены. Поля лежат вне #clientsList (index.html).
+const NO_STAFF = "none";
+const norm = (s) => String(s || "").toLowerCase().replace(/ё/g, "е")
+  .replace(/["«»'“”„]/g, "").replace(/\s+/g, " ").trim();
+
+function scopedClients() {
+  const q = norm(document.getElementById("kSearch")?.value);
+  const who = document.getElementById("kStaff")?.value || "";
+  return state.clientsList.filter((c) =>
+    (!who || (who === NO_STAFF ? !c.staff_id : c.staff_id === who)) &&
+    (!q || norm(c.name).includes(q)));
+}
+
+// Список бухгалтеров с числом клиентов. Бухгалтеру RLS отдаёт только его
+// клиентов — выбирать там не из кого, и поле прячется.
+function fillStaffFilter() {
+  const sel = document.getElementById("kStaff");
+  if (!sel) return;
+  const cur = sel.value;
+  const count = {};
+  for (const c of state.clientsList) count[c.staff_id || NO_STAFF] = (count[c.staff_id || NO_STAFF] || 0) + 1;
+  const opts = state.staffList.filter((s) => count[s.id])
+    .map((s) => `<option value="${esc(s.id)}">${esc(s.name)} · ${count[s.id]}</option>`);
+  if (count[NO_STAFF]) opts.push(`<option value="${NO_STAFF}">Без бухгалтера · ${count[NO_STAFF]}</option>`);
+  sel.innerHTML = `<option value="">Все бухгалтеры · ${state.clientsList.length}</option>` + opts.join("");
+  // выбранного бухгалтера могли убрать — тогда «все», а не пустой список
+  sel.value = [...sel.options].some((o) => o.value === cur) ? cur : "";
+  sel.hidden = Object.keys(count).length < 2;
+}
+
 // значение пункта «Личная задача» в форме сотрудника: пустое занято «выберите»
 export const PERSONAL = "personal";
 
@@ -100,15 +132,19 @@ export function renderClients() {
   ).join("");
 
   const box = document.getElementById("clientsList");
+  const tools = document.getElementById("clientsTools");
+  if (tools) tools.hidden = !state.clientsList.length;
   if (!state.clientsList.length) {
     box.innerHTML = '<div class="k-empty">Пока нет клиентов. Добавьте первого выше.</div>';
     return;
   }
+  fillStaffFilter();
   const isAdmin = !!(state.currentStaff && state.currentStaff.is_admin);
   const per = monthRange();
-  const bound = state.clientsList.filter(c => c.telegram_id).length;
+  const base = scopedClients();
+  const bound = base.filter(c => c.telegram_id).length;
 
-  const shown = state.clientsList.filter(CLIENT_FILTERS[clientFilter].test);
+  const shown = base.filter(CLIENT_FILTERS[clientFilter].test);
   const rows = shown.map(c => {
     const link = baseLink(c.token);
     const cnt = state.items.filter(it => it.client_id === c.id).length;
@@ -166,20 +202,22 @@ export function renderClients() {
       `</div>`;
   }).join("");
 
-  const n = state.clientsList.length;
+  const n = base.length, all = state.clientsList.length;
   const chips = Object.entries(CLIENT_FILTERS).map(([key, f]) => {
-    const cnt = state.clientsList.filter(f.test).length;
+    const cnt = base.filter(f.test).length;
     const on = key === clientFilter;
     return `<button class="k-chip${on ? " on" : ""}" data-kfilter="${key}" aria-pressed="${on}">` +
       `${f.label}<b>${cnt}</b></button>`;
   }).join("");
   const empty = shown.length ? "" :
-    `<div class="k-empty">${clientFilter === "notinv" ? "Всем отправлено — или клиенты уже подключили бота." : "Все клиенты подключили бота."}</div>`;
+    `<div class="k-empty">${!n ? "Таких клиентов нет — проверьте название или бухгалтера."
+      : clientFilter === "notinv" ? "Всем отправлено — или клиенты уже подключили бота." : "Все клиенты подключили бота."}</div>`;
   box.innerHTML = `<div class="k-chips">${chips}</div>` +
     `<div class="k-sheet">` +
     `<div class="k-hrow" aria-hidden="true"><div>Клиент</div><div>Бухгалтер</div><div>Персональная ссылка</div><div class="r">Заявок</div><div class="r">Действия</div></div>` +
     rows + empty +
-    `<div class="k-foot"><span>${n} ${plural(n, "клиент", "клиента", "клиентов")} · ${bound} ${plural(bound, "привязан", "привязаны", "привязаны")} к боту</span>` +
+    `<div class="k-foot"><span>${n} ${plural(n, "клиент", "клиента", "клиентов")}${n < all ? ` из ${all}` : ""} · ` +
+      `${bound} ${plural(bound, "привязан", "привязаны", "привязаны")} к боту</span>` +
     (isAdmin ? `<span>Удалить можно только клиента без заявок</span>` : "") + `</div>` +
   `</div>`;
 }

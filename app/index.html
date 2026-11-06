@@ -239,6 +239,15 @@
         <div class="login-err" id="ncErr"></div>
       </div>
     </div>
+    <!-- Поиск и бухгалтер — вне #clientsList: список перерисовывается на каждую
+         букву поиска, и поле внутри него теряло бы фокус и набранный текст. -->
+    <div id="clientsTools" class="k-tools" hidden>
+      <label class="q-search">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+        <input id="kSearch" type="search" placeholder="Найти клиента по названию" aria-label="Найти клиента по названию" autocomplete="off">
+      </label>
+      <select id="kStaff" aria-label="Клиенты бухгалтера"></select>
+    </div>
     <div id="clientsList"></div>
   </section>
 

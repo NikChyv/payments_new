@@ -587,6 +587,8 @@ async function init() {
   });
 
   document.getElementById("ncAdd").addEventListener("click", addClient);
+  document.getElementById("kSearch").addEventListener("input", renderClients);
+  document.getElementById("kStaff").addEventListener("change", renderClients);
 
   // сменили даты выгрузки — пересчитать «N заявок · сумма»
   document.getElementById("clientsList").addEventListener("input", e => {

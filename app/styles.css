@@ -396,6 +396,12 @@ body.client-mode .submit{height:52px;padding:0;border-radius:12px;font-size:16px
 .k-add button:hover,.k-sub button:hover{background:var(--accent-d)}
 .k-add .login-err{flex-basis:100%;margin:0;min-height:0}
 .k-add .login-err:empty{display:none}
+/* поиск и бухгалтер над таблицей — вне #clientsList, см. index.html */
+.k-tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin:0 0 10px}
+.k-tools[hidden],.k-tools select[hidden]{display:none}
+.k-tools select{height:37px;border:1px solid var(--line-strong);border-radius:8px;padding:0 12px;font-size:13.5px;background:var(--card);color:var(--ink)}
+.k-tools .q-search{flex:0 1 340px}  /* вид — как у поиска в очереди */
+.k-tools select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .k-sheet{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-sheet)}
 /* ширины колонок — из макета; «Действия» — по самому длинному набору ссылок админа */
 .k-hrow,.k-row{display:grid;grid-template-columns:minmax(0,1fr) 140px 200px 70px 420px;align-items:center;padding:0 20px;border-bottom:1px solid var(--line)}
@@ -468,6 +474,7 @@ body.client-mode .submit{height:52px;padding:0;border-radius:12px;font-size:16px
   /* на телефоне название — своей строкой, иначе от поля остаётся «Назв» */
   .k-add input{flex-basis:100%}
   .k-add select{flex:1;min-width:0}
+  .k-tools .q-search,.k-tools select{flex:1 1 100%;min-width:0}
 }
 
 /* ===== Переписка по заявке =====
